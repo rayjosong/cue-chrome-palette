@@ -32,7 +32,13 @@
     shadow.appendChild(link);
 
     const mount = document.createElement("div");
+    mount.style.visibility = "hidden";
     shadow.appendChild(mount);
+
+    link.addEventListener("load", () => {
+      mount.style.visibility = "visible";
+      if (paletteInstance) paletteInstance.focus();
+    });
 
     document.documentElement.appendChild(hostEl);
 

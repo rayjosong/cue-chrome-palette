@@ -398,34 +398,20 @@
     for (const g of data.tabGroups || []) {
       const dotColor = GROUP_COLOR_HEX[g.color] || GROUP_COLOR_HEX.grey;
       tabGroups.push({
-        id: `grp-focus-${g.id}`,
+        id: `grp-drill-${g.id}`,
         kind: "group",
         section: "Tab Groups",
+        groupId: g.id,
+        groupTitle: g.title,
         groupColor: dotColor,
+        groupCollapsed: g.collapsed,
         title: `${g.title} (${g.tabCount} ${g.tabCount === 1 ? "tab" : "tabs"})`,
-        subtitle: g.collapsed ? "Collapsed — switch to first tab in group" : "Expanded — switch to first tab in group",
+        subtitle: g.collapsed ? "Collapsed — Enter to view tabs in group" : "Enter to view tabs in group",
         badge: g.collapsed ? "Collapsed" : "Group",
         badgeClass: "qc-badge-tab",
         iconClass: "qc-icon-tab",
         iconName: "layers",
-        enterVerb: "Switch",
-        priority: 15,
-        run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "FOCUS_GROUP", groupId: g.id } })
-      });
-      tabGroups.push({
-        id: `grp-toggle-${g.id}`,
-        kind: "group",
-        section: "Tab Groups",
-        groupColor: dotColor,
-        title: `${g.collapsed ? "Expand" : "Collapse"} Group: ${g.title}`,
-        subtitle: `Toggle ${g.tabCount}-tab group`,
-        badge: "Group",
-        badgeClass: "qc-badge-action",
-        iconClass: "qc-icon-action",
-        iconName: "layers",
-        enterVerb: g.collapsed ? "Expand" : "Collapse",
-        priority: 11,
-        run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "TOGGLE_GROUP_COLLAPSE", groupId: g.id } })
+        enterVerb: "View Tabs"
       });
     }
 
@@ -681,13 +667,11 @@
       { id: "all", label: "All", icon: "search" },
       { id: "tabs", label: "Tabs", icon: "globe" },
       { id: "groups", label: "Groups", icon: "layers" },
-      { id: "closed", label: "Closed", icon: "rotateCcw" },
-      { id: "bookmarks", label: "Bookmarks", icon: "star" },
-      { id: "history", label: "History", icon: "history" },
       { id: "commands", label: "Commands", icon: "zap" }
     ];
 
     let chipMode = "all";
+    let activeGroup = null;
     const chipsBar = document.createElement("div");
     chipsBar.className = "qc-chips";
     const chipButtons = new Map();
@@ -697,7 +681,9 @@
       btn.className = `qc-chip${c.id === chipMode ? " qc-chip-active" : ""}`;
       btn.textContent = c.label;
       btn.addEventListener("click", () => {
+        activeGroup = null;
         chipMode = c.id;
+        chrome.storage?.local?.set({ quickcmdLastMode: chipMode });
         selectedIndex = 0;
         render();
         input.focus();
@@ -721,23 +707,179 @@
     const hints = document.createElement("div");
     hints.className = "qc-hints";
 
-    const prefixLegend = document.createElement("div");
-    prefixLegend.className = "qc-prefix-legend";
-    for (const p of [">", "@", "*", "/h", "/g", "/c"]) {
-      const k = document.createElement("kbd");
-      k.className = "qc-kbd";
-      k.textContent = p;
-      prefixLegend.appendChild(k);
-    }
-    footer.append(hints, prefixLegend);
+    const actionsTrigger = document.createElement("button");
+    actionsTrigger.type = "button";
+    actionsTrigger.className = "qc-actions-trigger";
+    const actText = document.createTextNode("Actions ");
+    const actKbd = document.createElement("kbd");
+    actKbd.className = "qc-kbd";
+    actKbd.textContent = "⌘K";
+    actionsTrigger.append(actText, actKbd);
+    footer.append(hints, actionsTrigger);
 
-    modal.append(searchRow, chipsBar, listEl, liveRegion, footer);
+    const popover = document.createElement("div");
+    popover.className = "qc-actions-popover";
+    popover.style.display = "none";
+
+    modal.append(searchRow, chipsBar, listEl, liveRegion, footer, popover);
     container.appendChild(backdrop);
 
     let data = { tabs: [], tabGroups: [], closedTabs: [], quickLinks: [], chromePages: [], bookmarks: [], history: [], activeTab: null };
     let currentItems = [];
     let selectedIndex = 0;
     let isClosing = false;
+    let popoverOpen = false;
+    let popoverItems = [];
+    let popoverIndex = 0;
+
+    function getActionsForItem(item) {
+      if (!item) return [];
+      const list = [];
+      if (item.kind === "tab") {
+        list.push(
+          {
+            title: "Switch to Tab",
+            iconName: "globe",
+            closesPalette: true,
+            run: () => item.run()
+          },
+          {
+            title: "Pin / Unpin Tab",
+            iconName: "pin",
+            closesPalette: false,
+            run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "PIN_TAB", tabId: item.tabId } })
+          },
+          {
+            title: "Mute / Unmute Tab",
+            iconName: "mute",
+            closesPalette: false,
+            run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "MUTE_TAB", tabId: item.tabId } })
+          },
+          {
+            title: "Duplicate Tab",
+            iconName: "copy",
+            closesPalette: false,
+            run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "DUPLICATE_TAB", tabId: item.tabId } })
+          },
+          {
+            title: "Copy Tab URL",
+            iconName: "link",
+            closesPalette: true,
+            run: async () => {
+              if (item.subtitle && navigator.clipboard) await navigator.clipboard.writeText(item.subtitle);
+            }
+          },
+          {
+            title: "Close Tab",
+            iconName: "x",
+            closesPalette: false,
+            run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_TAB", tabId: item.tabId } })
+          }
+        );
+      } else if (item.kind === "group") {
+        list.push(
+          {
+            title: "View Tabs in Group",
+            iconName: "layers",
+            closesPalette: false,
+            run: () => {
+              activeGroup = { id: item.groupId, title: item.groupTitle, color: item.groupColor };
+              input.value = "";
+              selectedIndex = 0;
+              render();
+            }
+          },
+          {
+            title: "Switch to First Tab in Group",
+            iconName: "globe",
+            closesPalette: true,
+            run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "FOCUS_GROUP", groupId: item.groupId } })
+          },
+          {
+            title: item.groupCollapsed ? "Expand Group" : "Collapse Group",
+            iconName: "layers",
+            closesPalette: false,
+            run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "TOGGLE_GROUP_COLLAPSE", groupId: item.groupId } })
+          }
+        );
+      } else {
+        list.push({
+          title: item.enterVerb || "Open",
+          iconName: item.iconName || "globe",
+          closesPalette: true,
+          run: () => item.run()
+        });
+        if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
+          list.push({
+            title: "Copy URL",
+            iconName: "link",
+            closesPalette: true,
+            run: async () => {
+              if (navigator.clipboard) await navigator.clipboard.writeText(item.subtitle);
+            }
+          });
+        }
+      }
+      return list;
+    }
+
+    function closePopover() {
+      popoverOpen = false;
+      popover.style.display = "none";
+      popover.textContent = "";
+    }
+
+    function renderPopover() {
+      popover.textContent = "";
+      popoverItems.forEach((act, idx) => {
+        const row = document.createElement("div");
+        row.className = `qc-item${idx === popoverIndex ? " qc-selected" : ""}`;
+        const iconBox = document.createElement("div");
+        iconBox.className = "qc-item-icon";
+        iconBox.appendChild(createSvgIcon(act.iconName || "zap"));
+        const main = document.createElement("div");
+        main.className = "qc-item-main";
+        const title = document.createElement("div");
+        title.className = "qc-item-title";
+        title.textContent = act.title;
+        main.appendChild(title);
+        row.append(iconBox, main);
+        row.addEventListener("mouseenter", () => {
+          popoverIndex = idx;
+          renderPopover();
+        });
+        row.addEventListener("click", async () => {
+          closePopover();
+          await act.run();
+          if (act.closesPalette) {
+            closeWithMotion();
+          } else {
+            await refreshData();
+          }
+        });
+        popover.appendChild(row);
+      });
+    }
+
+    function togglePopover() {
+      if (popoverOpen) {
+        closePopover();
+        return;
+      }
+      const selected = currentItems[selectedIndex];
+      popoverItems = getActionsForItem(selected);
+      if (!popoverItems.length) return;
+      popoverIndex = 0;
+      popoverOpen = true;
+      popover.style.display = "block";
+      renderPopover();
+    }
+
+    actionsTrigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      togglePopover();
+      input.focus();
+    });
 
     function closeWithMotion() {
       if (isClosing) return;
@@ -785,8 +927,61 @@
     }
 
     function render(preserveId = null) {
-      const { prefixLabel, activeMode, cleanQuery, isGrouped, modeCounts, items } = buildResults(data, input.value, chipMode);
-      currentItems = items;
+      let prefixLabel = "";
+      let activeMode = chipMode;
+      let cleanQuery = input.value.trim();
+      let isGrouped = false;
+      let modeCounts = {};
+
+      if (activeGroup) {
+        const groupTabs = (data.tabs || [])
+          .filter((t) => t.groupId === activeGroup.id)
+          .map((t) => ({
+            id: `tab-${t.id}`,
+            kind: "tab",
+            tabId: t.id,
+            windowId: t.windowId,
+            title: t.title,
+            subtitle: t.url,
+            favIconUrl: t.favIconUrl,
+            badge: t.pinned ? "Pinned" : "Tab",
+            badgeClass: "qc-badge-tab",
+            iconClass: "qc-icon-tab",
+            iconName: "globe",
+            enterVerb: "Switch",
+            run: () =>
+              sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "SWITCH_TAB", tabId: t.id, windowId: t.windowId }
+              })
+          }));
+        currentItems = cleanQuery
+          ? groupTabs.filter((t) => fuzzyMatch(`${t.title} ${t.subtitle}`, cleanQuery).score > 0)
+          : groupTabs;
+        prefixLabel = `Group: ${activeGroup.title}`;
+      } else {
+        const built = buildResults(data, input.value, chipMode);
+        prefixLabel = built.prefixLabel;
+        activeMode = built.activeMode;
+        cleanQuery = built.cleanQuery;
+        isGrouped = built.isGrouped;
+        modeCounts = built.modeCounts;
+        currentItems = built.items.map((it) => {
+          if (it.kind === "group" && !it.run) {
+            return {
+              ...it,
+              run: async () => {
+                activeGroup = { id: it.groupId, title: it.groupTitle, color: it.groupColor };
+                input.value = "";
+                selectedIndex = 0;
+                render();
+              },
+              keepsOpen: true
+            };
+          }
+          return it;
+        });
+      }
 
       if (preserveId) {
         const foundIdx = currentItems.findIndex((it) => it.id === preserveId);
@@ -800,7 +995,7 @@
 
       for (const c of CHIP_MODES) {
         const btn = chipButtons.get(c.id);
-        const isActive = c.id === activeMode;
+        const isActive = !activeGroup && c.id === activeMode;
         btn.classList.toggle("qc-chip-active", isActive);
         const count = modeCounts[c.id];
         btn.textContent = isActive && typeof count === "number" ? `${c.label} · ${count}` : c.label;
@@ -969,7 +1164,7 @@
         });
         row.addEventListener("click", async () => {
           await item.run();
-          closeWithMotion();
+          if (!item.keepsOpen) closeWithMotion();
         });
 
         listEl.appendChild(row);
@@ -1032,10 +1227,80 @@
       const mod = e.metaKey || e.ctrlKey;
       const selected = currentItems[selectedIndex];
 
+      if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        e.stopPropagation();
+        togglePopover();
+        return;
+      }
+
+      if (popoverOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          closePopover();
+          return;
+        }
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          popoverIndex = (popoverIndex + 1) % popoverItems.length;
+          renderPopover();
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          popoverIndex = (popoverIndex - 1 + popoverItems.length) % popoverItems.length;
+          renderPopover();
+          return;
+        }
+        if (e.key === "Enter" && popoverItems[popoverIndex]) {
+          e.preventDefault();
+          const act = popoverItems[popoverIndex];
+          closePopover();
+          await act.run();
+          if (act.closesPalette) {
+            closeWithMotion();
+          } else {
+            await refreshData();
+          }
+          return;
+        }
+        return;
+      }
+
+      if (e.key === "Tab") {
+        e.preventDefault();
+        activeGroup = null;
+        const curIdx = CHIP_MODES.findIndex((c) => c.id === chipMode);
+        const nextIdx = e.shiftKey
+          ? (curIdx - 1 + CHIP_MODES.length) % CHIP_MODES.length
+          : (curIdx + 1) % CHIP_MODES.length;
+        chipMode = CHIP_MODES[nextIdx].id;
+        chrome.storage?.local?.set({ quickcmdLastMode: chipMode });
+        selectedIndex = 0;
+        render();
+        return;
+      }
+
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
+        if (activeGroup) {
+          activeGroup = null;
+          input.value = "";
+          selectedIndex = 0;
+          render();
+          return;
+        }
         closeWithMotion();
+        return;
+      }
+
+      if (e.key === "Backspace" && !mod && activeGroup && !input.value) {
+        e.preventDefault();
+        activeGroup = null;
+        selectedIndex = 0;
+        render();
         return;
       }
 
@@ -1100,7 +1365,7 @@
       if (e.key === "Enter" && selected) {
         e.preventDefault();
         await selected.run();
-        closeWithMotion();
+        if (!selected.keepsOpen) closeWithMotion();
         return;
       }
 
@@ -1133,7 +1398,16 @@
       });
     }
 
-    refreshData();
+    if (chrome.storage?.local) {
+      chrome.storage.local.get("quickcmdLastMode", (res) => {
+        if (res?.quickcmdLastMode && CHIP_MODES.some((c) => c.id === res.quickcmdLastMode)) {
+          chipMode = res.quickcmdLastMode;
+        }
+        refreshData();
+      });
+    } else {
+      refreshData();
+    }
     setTimeout(() => input.focus(), 0);
 
     return {
