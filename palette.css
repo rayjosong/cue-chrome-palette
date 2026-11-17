@@ -182,11 +182,18 @@
 
 .qc-is-popup .qc-modal {
   width: 100%;
+  height: 520px;
+  max-height: 520px;
   border-radius: 0;
   border: none;
   box-shadow: none;
   background: var(--qc-bg-solid);
   animation: none;
+}
+
+.qc-is-popup .qc-list {
+  flex: 1;
+  max-height: none;
 }
 
 @keyframes qc-slide-in {
