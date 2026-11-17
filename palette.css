@@ -131,9 +131,9 @@
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding-top: 13vh;
+  padding: 16px;
   animation: qc-fade-in 0.14s ease-out;
 }
 
@@ -163,6 +163,7 @@
 
 .qc-modal {
   width: min(650px, 92vw);
+  max-height: 92vh;
   background: var(--qc-bg);
   backdrop-filter: blur(36px) saturate(185%);
   -webkit-backdrop-filter: blur(36px) saturate(185%);
@@ -616,9 +617,6 @@
 }
 
 @media (max-height: 560px) {
-  .qc-backdrop {
-    padding-top: 4vh;
-  }
   .qc-list {
     max-height: 52vh;
   }
