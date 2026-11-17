@@ -123,6 +123,7 @@ async function getPaletteData(query = "") {
       color: g.color || "grey",
       collapsed: Boolean(g.collapsed),
       windowId: g.windowId,
+      currentWindow: activeTab ? g.windowId === activeTab.windowId : false,
       tabCount: 0
     });
   }

@@ -346,6 +346,14 @@
     orange: "#fb923c"
   };
 
+  function hexToRgba(hex, alpha) {
+    const clean = hex.replace("#", "");
+    const r = parseInt(clean.slice(0, 2), 16);
+    const g = parseInt(clean.slice(2, 4), 16);
+    const b = parseInt(clean.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
   function looksLikeUrl(q) {
     if (!q || /\s/.test(q)) return false;
     return /^(https?:\/\/|localhost(:\d+)?|([a-z0-9-]+\.)+[a-z]{2,}(\/.*)?)$/i.test(q);
@@ -397,6 +405,7 @@
     const tabGroups = [];
     for (const g of data.tabGroups || []) {
       const dotColor = GROUP_COLOR_HEX[g.color] || GROUP_COLOR_HEX.grey;
+      const winNote = g.currentWindow ? "Current window" : "Other window";
       tabGroups.push({
         id: `grp-drill-${g.id}`,
         kind: "group",
@@ -406,14 +415,17 @@
         groupColor: dotColor,
         groupCollapsed: g.collapsed,
         title: `${g.title} (${g.tabCount} ${g.tabCount === 1 ? "tab" : "tabs"})`,
-        subtitle: g.collapsed ? "Collapsed — Enter to view tabs in group" : "Enter to view tabs in group",
-        badge: g.collapsed ? "Collapsed" : "Group",
-        badgeClass: "qc-badge-tab",
-        iconClass: "qc-icon-tab",
+        subtitle: `${winNote} · ${g.collapsed ? "Collapsed — " : ""}Enter to view tabs in group`,
+        badge: g.collapsed ? "Collapsed" : g.currentWindow ? "Group" : "Other Window",
+        badgeClass: "",
+        iconClass: "",
+        customColor: dotColor,
         iconName: "layers",
-        enterVerb: "View Tabs"
+        enterVerb: "View Tabs",
+        priority: g.currentWindow ? 16 : 13
       });
     }
+    tabGroups.sort((a, b) => b.priority - a.priority);
 
     const closedTabs = (data.closedTabs || []).map((c) => ({
       id: `closed-${c.sessionId}`,
@@ -1093,6 +1105,11 @@
 
         const iconBox = document.createElement("div");
         iconBox.className = `qc-item-icon ${item.iconClass || ""}`;
+        if (item.customColor) {
+          iconBox.style.color = item.customColor;
+          iconBox.style.background = hexToRgba(item.customColor, 0.14);
+          iconBox.style.borderColor = hexToRgba(item.customColor, 0.28);
+        }
         if (item.favIconUrl && /^(https?:|chrome:|data:)/i.test(item.favIconUrl)) {
           const img = document.createElement("img");
           img.src = item.favIconUrl;
@@ -1130,6 +1147,11 @@
         if (item.badge) {
           const badge = document.createElement("span");
           badge.className = `qc-badge ${item.badgeClass || ""}`;
+          if (item.customColor) {
+            badge.style.color = item.customColor;
+            badge.style.background = hexToRgba(item.customColor, 0.14);
+            badge.style.borderColor = hexToRgba(item.customColor, 0.28);
+          }
           badge.textContent = item.badge;
           meta.appendChild(badge);
         }
