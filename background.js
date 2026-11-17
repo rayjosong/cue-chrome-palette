@@ -19,13 +19,44 @@ const CHROME_PAGES = [
 ];
 
 const mruTimestamps = new Map();
+let mruLoaded = false;
+
+async function ensureMruLoaded() {
+  if (mruLoaded) return;
+  mruLoaded = true;
+  try {
+    const stored = await chrome.storage.session.get("quickcmdMru");
+    if (stored && stored.quickcmdMru && typeof stored.quickcmdMru === "object") {
+      for (const [k, v] of Object.entries(stored.quickcmdMru)) {
+        const numId = Number(k);
+        const numVal = Number(v);
+        if (!isNaN(numId) && !isNaN(numVal)) {
+          mruTimestamps.set(numId, numVal);
+        }
+      }
+    }
+  } catch {
+    // Session storage might fail or be unavailable in certain contexts
+  }
+}
+
+function persistMru() {
+  try {
+    const obj = Object.fromEntries(mruTimestamps);
+    chrome.storage.session.set({ quickcmdMru: obj }).catch(() => {});
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   mruTimestamps.set(tabId, Date.now());
+  persistMru();
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   mruTimestamps.delete(tabId);
+  persistMru();
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -42,6 +73,10 @@ function isRestrictedUrl(url = "") {
     url.startsWith("chrome-extension://") ||
     url.startsWith("edge://") ||
     url.startsWith("about:") ||
+    url.startsWith("view-source:") ||
+    url.startsWith("devtools://") ||
+    url.startsWith("chrome-search://") ||
+    url.startsWith("data:") ||
     url.startsWith("https://chromewebstore.google.com") ||
     url.startsWith("https://chrome.google.com/webstore")
   );
@@ -61,14 +96,17 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 
   try {
-    await chrome.tabs.sendMessage(activeTab.id, { type: "TOGGLE_PALETTE" });
+    const res = await chrome.tabs.sendMessage(activeTab.id, { type: "TOGGLE_PALETTE" });
+    if (res && res.ok) return;
+    throw new Error("Palette not initialized in tab");
   } catch {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: activeTab.id },
-        files: ["palette-ui.js", "content.js"]
+        files: ["palette-core.js", "palette-ui.js", "content.js"]
       });
-      await chrome.tabs.sendMessage(activeTab.id, { type: "TOGGLE_PALETTE" });
+      const res = await chrome.tabs.sendMessage(activeTab.id, { type: "TOGGLE_PALETTE" });
+      if (!res || !res.ok) throw new Error("Fallback to popup");
     } catch {
       try {
         await chrome.action.openPopup();
@@ -82,6 +120,16 @@ chrome.commands.onCommand.addListener(async (command) => {
 async function getQuickLinks() {
   const { quickLinks } = await chrome.storage.sync.get("quickLinks");
   return Array.isArray(quickLinks) ? quickLinks : DEFAULT_QUICK_LINKS;
+}
+
+let cachedBookmarks = null;
+
+if (chrome.bookmarks) {
+  const invalidateBookmarks = () => { cachedBookmarks = null; };
+  chrome.bookmarks.onCreated.addListener(invalidateBookmarks);
+  chrome.bookmarks.onRemoved.addListener(invalidateBookmarks);
+  chrome.bookmarks.onChanged.addListener(invalidateBookmarks);
+  chrome.bookmarks.onMoved.addListener(invalidateBookmarks);
 }
 
 async function flattenBookmarks(nodes, folderPath = "", out = []) {
@@ -101,19 +149,121 @@ async function flattenBookmarks(nodes, folderPath = "", out = []) {
   return out;
 }
 
+async function getBookmarks() {
+  if (cachedBookmarks) return cachedBookmarks;
+  try {
+    const tree = await chrome.bookmarks.getTree();
+    cachedBookmarks = await flattenBookmarks(tree);
+    return cachedBookmarks;
+  } catch {
+    return [];
+  }
+}
+
+async function getFrecency() {
+  try {
+    const stored = await chrome.storage.local.get("quickcmdFrecency");
+    return stored && stored.quickcmdFrecency && typeof stored.quickcmdFrecency === "object" ? stored.quickcmdFrecency : {};
+  } catch {
+    return {};
+  }
+}
+
+async function recordUsage(itemId) {
+  if (!itemId) return { ok: false };
+  try {
+    const frecency = await getFrecency();
+    const entry = frecency[itemId] || { count: 0, lastUsed: 0 };
+    frecency[itemId] = {
+      count: entry.count + 1,
+      lastUsed: Date.now()
+    };
+    const keys = Object.keys(frecency);
+    if (keys.length > 300) {
+      const sorted = keys.sort((a, b) => (frecency[b].lastUsed || 0) - (frecency[a].lastUsed || 0));
+      const pruned = {};
+      for (let i = 0; i < 250 && i < sorted.length; i++) {
+        pruned[sorted[i]] = frecency[sorted[i]];
+      }
+      await chrome.storage.local.set({ quickcmdFrecency: pruned });
+      return { ok: true, frecency: pruned };
+    }
+    await chrome.storage.local.set({ quickcmdFrecency: frecency });
+    return { ok: true, frecency };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+async function getInstalledThemes() {
+  if (!chrome.management) return [];
+  try {
+    const all = await chrome.management.getAll().catch(() => []);
+    return all
+      .filter((ext) => ext.type === "theme")
+      .map((ext) => ({
+        id: ext.id,
+        name: ext.name,
+        description: ext.description || "",
+        enabled: Boolean(ext.enabled),
+        version: ext.version || ""
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
+
+async function searchHistory(query = "") {
+  try {
+    const items = await chrome.history.search({
+      text: query.trim(),
+      maxResults: 30,
+      startTime: Date.now() - 1000 * 60 * 60 * 24 * 30
+    });
+    return items
+      .filter((h) => h.url)
+      .map((h) => ({
+        id: `hist-${h.id}`,
+        title: h.title || h.url,
+        url: h.url,
+        visitCount: h.visitCount || 0
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeUrlForDedup(rawUrl = "") {
+  try {
+    const u = new URL(rawUrl);
+    u.hash = "";
+    let s = u.toString();
+    if (s.endsWith("/")) {
+      s = s.slice(0, -1);
+    }
+    return s;
+  } catch {
+    return rawUrl.replace(/#.*$/, "").replace(/\/+$/, "");
+  }
+}
+
 async function getPaletteData(query = "") {
-  const [tabs, activeTabs, quickLinks, bookmarkTree, historyItems, tabGroups, recentSessions] = await Promise.all([
+  await ensureMruLoaded();
+
+  const [tabs, activeTabs, quickLinks, bookmarks, historyItems, tabGroups, recentSessions, frecency, themes] = await Promise.all([
     chrome.tabs.query({}),
     chrome.tabs.query({ active: true, currentWindow: true }),
     getQuickLinks(),
-    chrome.bookmarks.getTree(),
-    chrome.history.search({ text: query.trim(), maxResults: 30, startTime: Date.now() - 1000 * 60 * 60 * 24 * 30 }),
+    getBookmarks(),
+    searchHistory(query),
     chrome.tabGroups ? chrome.tabGroups.query({}).catch(() => []) : Promise.resolve([]),
-    chrome.sessions ? chrome.sessions.getRecentlyClosed({ maxResults: 15 }).catch(() => []) : Promise.resolve([])
+    chrome.sessions ? chrome.sessions.getRecentlyClosed({ maxResults: 15 }).catch(() => []) : Promise.resolve([]),
+    getFrecency(),
+    getInstalledThemes()
   ]);
 
   const activeTab = activeTabs[0] || null;
-  const bookmarks = await flattenBookmarks(bookmarkTree);
 
   const groupMap = new Map();
   for (const g of tabGroups) {
@@ -192,14 +342,9 @@ async function getPaletteData(query = "") {
     quickLinks,
     chromePages: CHROME_PAGES,
     bookmarks,
-    history: historyItems
-      .filter((h) => h.url)
-      .map((h) => ({
-        id: `hist-${h.id}`,
-        title: h.title || h.url,
-        url: h.url,
-        visitCount: h.visitCount || 0
-      }))
+    history: historyItems,
+    frecency,
+    themes
   };
 }
 
@@ -212,26 +357,27 @@ async function executeAction(payload) {
       if (windowId !== undefined) {
         await chrome.windows.update(windowId, { focused: true });
       }
-      return { ok: true };
+      return { ok: true, toast: "Switched tab" };
     }
     case "CLOSE_TAB": {
       await chrome.tabs.remove(tabId);
-      return { ok: true };
+      return { ok: true, toast: "Closed tab" };
     }
     case "PIN_TAB": {
       const tab = await chrome.tabs.get(tabId);
-      await chrome.tabs.update(tabId, { pinned: !tab.pinned });
-      return { ok: true, pinned: !tab.pinned };
+      const nextPinned = !tab.pinned;
+      await chrome.tabs.update(tabId, { pinned: nextPinned });
+      return { ok: true, pinned: nextPinned, toast: !nextPinned ? "Unpinned tab" : "Pinned tab" };
     }
     case "MUTE_TAB": {
       const tab = await chrome.tabs.get(tabId);
       const nextMuted = !tab.mutedInfo?.muted;
       await chrome.tabs.update(tabId, { muted: nextMuted });
-      return { ok: true, muted: nextMuted };
+      return { ok: true, muted: nextMuted, toast: nextMuted ? "Muted tab" : "Unmuted tab" };
     }
     case "DUPLICATE_TAB": {
       await chrome.tabs.duplicate(tabId);
-      return { ok: true };
+      return { ok: true, toast: "Duplicated tab" };
     }
     case "CLOSE_OTHER_TABS": {
       const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -239,16 +385,16 @@ async function executeAction(payload) {
       const all = await chrome.tabs.query({ currentWindow: true });
       const toClose = all.filter((t) => t.id !== active.id && !t.pinned).map((t) => t.id);
       if (toClose.length) await chrome.tabs.remove(toClose);
-      return { ok: true };
+      return { ok: true, toast: "Closed " + toClose.length + " tab(s)" };
     }
     case "MOVE_TAB_NEW_WINDOW": {
       const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (active) await chrome.windows.create({ tabId: active.id });
-      return { ok: true };
+      return { ok: true, toast: "Moved tab to new window" };
     }
     case "NEW_INCOGNITO": {
       await chrome.windows.create({ incognito: true });
-      return { ok: true };
+      return { ok: true, toast: "Opened new incognito window" };
     }
     case "OPEN_URL": {
       await chrome.tabs.create({ url });
@@ -260,7 +406,7 @@ async function executeAction(payload) {
     }
     case "RESTORE_SESSION": {
       await chrome.sessions.restore(payload.sessionId);
-      return { ok: true };
+      return { ok: true, toast: "Restored closed session" };
     }
     case "FOCUS_GROUP": {
       const groupTabs = await chrome.tabs.query({ groupId: payload.groupId });
@@ -281,14 +427,148 @@ async function executeAction(payload) {
         const opts = payload.groupId !== undefined ? { groupId: payload.groupId, tabIds: [active.id] } : { tabIds: [active.id] };
         await chrome.tabs.group(opts);
       }
-      return { ok: true };
+      return { ok: true, toast: "Grouped current tab" };
     }
     case "UNGROUP_CURRENT_TAB": {
       const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (active && active.groupId !== -1) {
         await chrome.tabs.ungroup(active.id);
       }
-      return { ok: true };
+      return { ok: true, toast: "Removed tab from group" };
+    }
+    case "CLOSE_DUPLICATE_TABS": {
+      await ensureMruLoaded();
+      const allTabs = await chrome.tabs.query({ currentWindow: true });
+      const map = new Map();
+      for (const t of allTabs) {
+        if (!t.url || t.url.startsWith("chrome://") || t.url.startsWith("about:")) continue;
+        const norm = normalizeUrlForDedup(t.url);
+        if (!map.has(norm)) map.set(norm, []);
+        map.get(norm).push(t);
+      }
+      const toClose = [];
+      for (const [, group] of map.entries()) {
+        if (group.length > 1) {
+          group.sort((a, b) => {
+            if (a.active) return -1;
+            if (b.active) return 1;
+            const ma = Math.max(a.lastAccessed || 0, mruTimestamps.get(a.id) || 0);
+            const mb = Math.max(b.lastAccessed || 0, mruTimestamps.get(b.id) || 0);
+            return mb - ma;
+          });
+          for (let i = 1; i < group.length; i++) {
+            if (!group[i].pinned) {
+              toClose.push(group[i].id);
+            }
+          }
+        }
+      }
+      if (toClose.length) {
+        await chrome.tabs.remove(toClose);
+      }
+      return {
+        ok: true,
+        closedCount: toClose.length,
+        toast: toClose.length ? `Closed ${toClose.length} duplicate ${toClose.length === 1 ? "tab" : "tabs"}` : "No duplicate tabs found"
+      };
+    }
+    case "CLOSE_DOMAIN_TABS": {
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      let domain = payload.domain;
+      if (!domain && active && active.url) {
+        try {
+          domain = new URL(active.url).hostname;
+        } catch {}
+      }
+      if (!domain) return { ok: false, error: "No domain specified" };
+      const allTabs = await chrome.tabs.query({ currentWindow: true });
+      const ids = [];
+      for (const t of allTabs) {
+        if (t.pinned) continue;
+        try {
+          if (new URL(t.url).hostname === domain) {
+            ids.push(t.id);
+          }
+        } catch {}
+      }
+      if (ids.length) {
+        await chrome.tabs.remove(ids);
+      }
+      return {
+        ok: true,
+        closedCount: ids.length,
+        toast: `Closed ${ids.length} ${domain} ${ids.length === 1 ? "tab" : "tabs"}`
+      };
+    }
+    case "ASSIGN_TAB_TO_GROUP": {
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tabIds = payload.tabIds || [payload.tabId || (active ? active.id : null)].filter(Boolean);
+      const groupId = payload.groupId;
+      if (!tabIds.length || groupId === undefined) return { ok: false, error: "Missing tabIds or groupId" };
+      await chrome.tabs.group({ groupId, tabIds });
+      let grp = null;
+      try {
+        grp = await chrome.tabGroups.get(groupId);
+      } catch {}
+      return {
+        ok: true,
+        groupId,
+        toast: `Added to group "${grp?.title || "Group"}"`
+      };
+    }
+    case "CREATE_TAB_GROUP": {
+      let tabIds = payload.tabIds;
+      if (!tabIds || !tabIds.length) {
+        if (payload.domain) {
+          const allTabs = await chrome.tabs.query({ currentWindow: true });
+          tabIds = [];
+          for (const t of allTabs) {
+            try {
+              if (new URL(t.url).hostname === payload.domain) {
+                tabIds.push(t.id);
+              }
+            } catch {}
+          }
+        }
+        if (!tabIds || !tabIds.length) {
+          const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (active) tabIds = [payload.tabId || active.id];
+        }
+      }
+      if (!tabIds || !tabIds.length) return { ok: false, error: "No tabs to group" };
+      const groupId = await chrome.tabs.group({ tabIds });
+      const title = payload.title || "";
+      const color = payload.color || "blue";
+      await chrome.tabGroups.update(groupId, { title, color });
+      return {
+        ok: true,
+        groupId,
+        toast: `Created group "${title || "Untitled"}" (${tabIds.length} ${tabIds.length === 1 ? "tab" : "tabs"})`
+      };
+    }
+    case "SWITCH_CHROME_THEME": {
+      const { themeId } = payload;
+      if (themeId) {
+        try {
+          const ext = await chrome.management.get(themeId);
+          await chrome.management.setEnabled(themeId, true);
+          return { ok: true, toast: `Activated theme: ${ext.name}` };
+        } catch (err) {
+          return { ok: false, error: err.message };
+        }
+      } else {
+        try {
+          const all = await chrome.management.getAll();
+          for (const ext of all) {
+            if (ext.type === "theme" && ext.enabled && ext.id !== chrome.runtime.id) {
+              await chrome.management.setEnabled(ext.id, false);
+            }
+          }
+          return { ok: true, toast: "Restored default Chrome theme" };
+        } catch (err) {
+          return { ok: false, error: err.message };
+        }
+      }
     }
     default:
       return { ok: false, error: `Unknown action: ${action}` };
@@ -305,6 +585,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === "EXECUTE_ACTION") {
     executeAction(message.payload)
+      .then((res) => sendResponse(res))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "SEARCH_HISTORY") {
+    searchHistory(message.query || "")
+      .then((history) => sendResponse({ ok: true, history }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "RECORD_USAGE") {
+    recordUsage(message.itemId)
       .then((res) => sendResponse(res))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "QuickCmd — Command Palette",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Raycast/Arc-style command palette for tabs, bookmarks, history, Chrome pages, and custom bang shortcuts.",
   "permissions": [
     "tabs",
@@ -11,7 +11,15 @@
     "history",
     "storage",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "management"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["palette-core.js", "palette-ui.js", "content.js"],
+      "run_at": "document_idle"
+    }
   ],
   "background": {
     "service_worker": "background.js"

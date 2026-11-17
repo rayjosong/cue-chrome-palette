@@ -1,14 +1,17 @@
 (() => {
-  if (window.__QuickCmdContentLoaded) return;
+  if (window.__QuickCmdContentLoaded && typeof window.__QuickCmdCreatePalette === "function") return;
   window.__QuickCmdContentLoaded = true;
 
   let hostEl = null;
   let paletteInstance = null;
+  let isClosing = false;
 
   function closePalette() {
+    isClosing = false;
     if (paletteInstance) {
-      paletteInstance.destroy();
+      const inst = paletteInstance;
       paletteInstance = null;
+      inst.destroy();
     }
     if (hostEl) {
       hostEl.remove();
@@ -18,10 +21,24 @@
 
   function openPalette() {
     if (hostEl) {
-      closePalette();
+      if (isClosing) {
+        closePalette();
+      } else {
+        isClosing = true;
+        if (paletteInstance) {
+          paletteInstance.destroy();
+        } else {
+          closePalette();
+        }
+        return;
+      }
+    }
+
+    if (typeof window.__QuickCmdCreatePalette !== "function") {
       return;
     }
 
+    isClosing = false;
     hostEl = document.createElement("div");
     hostEl.id = "quickcmd-shadow-host";
     const shadow = hostEl.attachShadow({ mode: "open" });
@@ -35,10 +52,17 @@
     mount.style.visibility = "hidden";
     shadow.appendChild(mount);
 
-    link.addEventListener("load", () => {
+    let revealed = false;
+    const revealMount = () => {
+      if (revealed) return;
+      revealed = true;
       mount.style.visibility = "visible";
       if (paletteInstance) paletteInstance.focus();
-    });
+    };
+
+    link.addEventListener("load", revealMount, { once: true });
+    link.addEventListener("error", revealMount, { once: true });
+    setTimeout(revealMount, 150);
 
     document.documentElement.appendChild(hostEl);
 
@@ -49,9 +73,31 @@
     });
   }
 
-  chrome.runtime.onMessage.addListener((message) => {
+  // Fallback in-page shortcut listener (⌘⇧K on Mac, Ctrl+Shift+K on Windows/Linux)
+  // Works even if chrome://extensions/shortcuts has a unbound/conflicting command
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
+      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        e.stopPropagation();
+        openPalette();
+      }
+    },
+    true
+  );
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === "TOGGLE_PALETTE") {
-      openPalette();
+      try {
+        openPalette();
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || "Failed to open palette" });
+      }
     }
+    return false;
   });
 })();

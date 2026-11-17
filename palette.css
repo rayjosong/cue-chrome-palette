@@ -1,6 +1,7 @@
 :host,
 .qc-popup-root {
   all: initial;
+  display: block;
   font-family: "Google Sans", "Google Sans Text", "Product Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -53,6 +54,10 @@
   --qc-history-fg: #94a3b8;
   --qc-history-bg: rgba(148, 163, 184, 0.14);
   --qc-history-bd: rgba(148, 163, 184, 0.22);
+
+  --qc-theme-fg: #e879f9;
+  --qc-theme-bg: rgba(217, 70, 239, 0.14);
+  --qc-theme-bd: rgba(217, 70, 239, 0.24);
 
   color: var(--qc-text);
 }
@@ -108,6 +113,10 @@
     --qc-history-fg: #475569;
     --qc-history-bg: rgba(100, 116, 139, 0.12);
     --qc-history-bd: rgba(100, 116, 139, 0.2);
+
+    --qc-theme-fg: #a21caf;
+    --qc-theme-bg: rgba(162, 28, 175, 0.1);
+    --qc-theme-bd: rgba(162, 28, 175, 0.2);
   }
 }
 
@@ -476,6 +485,7 @@
 .qc-icon-chrome { color: var(--qc-chrome-fg); background: var(--qc-chrome-bg); border-color: var(--qc-chrome-bd); }
 .qc-icon-bookmark { color: var(--qc-bookmark-fg); background: var(--qc-bookmark-bg); border-color: var(--qc-bookmark-bd); }
 .qc-icon-history { color: var(--qc-history-fg); background: var(--qc-history-bg); border-color: var(--qc-history-bd); }
+.qc-icon-theme { color: var(--qc-theme-fg); background: var(--qc-theme-bg); border-color: var(--qc-theme-bd); }
 
 .qc-item-main {
   flex: 1;
@@ -541,6 +551,7 @@
 .qc-badge.qc-badge-chrome { color: var(--qc-chrome-fg); background: var(--qc-chrome-bg); border-color: var(--qc-chrome-bd); }
 .qc-badge.qc-badge-bookmark { color: var(--qc-bookmark-fg); background: var(--qc-bookmark-bg); border-color: var(--qc-bookmark-bd); }
 .qc-badge.qc-badge-history { color: var(--qc-history-fg); background: var(--qc-history-bg); border-color: var(--qc-history-bd); }
+.qc-badge.qc-badge-theme { color: var(--qc-theme-fg); background: var(--qc-theme-bg); border-color: var(--qc-theme-bd); }
 
 .qc-enter-hint {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -641,6 +652,80 @@
 .qc-actions-trigger:hover {
   background: var(--qc-fill-hover);
   color: var(--qc-text);
+}
+
+.qc-item-sub .qc-hl {
+  background: var(--qc-accent-fill);
+  color: var(--qc-accent-text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.qc-color-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--qc-divider);
+  background: var(--qc-footer-bg);
+}
+
+.qc-color-bar-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--qc-text-dim);
+}
+
+.qc-color-swatches {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.qc-color-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.qc-color-swatch:hover {
+  transform: scale(1.12);
+}
+
+.qc-color-swatch.qc-active {
+  border-color: var(--qc-text);
+  box-shadow: 0 0 0 2px var(--qc-accent-fill);
+  transform: scale(1.16);
+}
+
+.qc-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 48px;
+  transform: translate(-50%, 8px);
+  background: var(--qc-bg-solid);
+  color: var(--qc-text);
+  border: 1px solid var(--qc-accent-border);
+  box-shadow: var(--qc-shadow);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 15;
+  white-space: nowrap;
+}
+
+.qc-toast.qc-toast-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .qc-modal {
