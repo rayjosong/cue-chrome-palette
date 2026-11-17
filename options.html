@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>QuickCmd — Quick Links & Bangs</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        padding: 40px 20px;
+        background: #0e0e12;
+        color: #f4f4f6;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+      }
+      .wrap {
+        max-width: 780px;
+        margin: 0 auto;
+        background: rgba(24, 24, 30, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 14px;
+        padding: 24px 28px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 20px;
+        font-weight: 600;
+      }
+      p.sub {
+        margin: 0 0 22px;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.56);
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 90px 160px 1fr 1fr auto;
+        gap: 8px;
+        margin-bottom: 10px;
+        align-items: center;
+      }
+      .hdr {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: rgba(255, 255, 255, 0.45);
+        margin-bottom: 8px;
+      }
+      input {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: #f4f4f6;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        outline: none;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      input:focus {
+        border-color: rgba(129, 140, 248, 0.65);
+      }
+      button {
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.08);
+        color: #f4f4f6;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: rgba(255, 255, 255, 0.14);
+      }
+      button.primary {
+        background: #4f46e5;
+        border-color: #6366f1;
+      }
+      button.primary:hover {
+        background: #4338ca;
+      }
+      button.danger {
+        color: #fca5a5;
+      }
+      .actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 18px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .status {
+        font-size: 12.5px;
+        color: #86efac;
+        margin-left: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Quick Links & Bang Shortcuts</h1>
+      <p class="sub">
+        Type a bang like <code>gh</code> to open GitHub, or <code>gh react</code> to search using the Search URL template (<code>{query}</code>).
+      </p>
+
+      <div class="row hdr">
+        <div>Bang</div>
+        <div>Title</div>
+        <div>URL</div>
+        <div>Search URL (optional)</div>
+        <div></div>
+      </div>
+      <div id="rows"></div>
+
+      <div class="actions">
+        <div>
+          <button id="add-btn">+ Add Quick Link</button>
+          <button id="reset-btn">Reset Defaults</button>
+        </div>
+        <div>
+          <span id="status" class="status"></span>
+          <button id="save-btn" class="primary">Save Changes</button>
+        </div>
+      </div>
+    </div>
+    <script src="options.js"></script>
+  </body>
+</html>

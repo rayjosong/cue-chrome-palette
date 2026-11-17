@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "QuickCmd — Command Palette",
+  "version": "1.0.0",
+  "description": "Raycast/Arc-style command palette for tabs, bookmarks, history, Chrome pages, and custom bang shortcuts.",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "sessions",
+    "bookmarks",
+    "history",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Open Command Palette (⌘⇧K)"
+  },
+  "options_page": "options.html",
+  "commands": {
+    "toggle-palette": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Toggle Command Palette"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["palette.css"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
