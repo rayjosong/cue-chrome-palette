@@ -95,52 +95,44 @@
     return svg;
   }
 
-  function renderHighlightedText(container, text, query) {
-    container.textContent = "";
-    const str = text || "";
-    const q = (query || "").trim().toLowerCase();
-    if (!q) {
-      container.textContent = str;
-      return;
-    }
-
-    const lower = str.toLowerCase();
-    const directIdx = lower.indexOf(q);
-    if (directIdx !== -1) {
-      if (directIdx > 0) container.appendChild(document.createTextNode(str.slice(0, directIdx)));
-      const mark = document.createElement("mark");
-      mark.className = "qc-hl";
-      mark.textContent = str.slice(directIdx, directIdx + q.length);
-      container.appendChild(mark);
-      if (directIdx + q.length < str.length) {
-        container.appendChild(document.createTextNode(str.slice(directIdx + q.length)));
-      }
-      return;
-    }
-
-    container.textContent = str;
-  }
-
-  function fuzzyScore(text, query) {
-    if (!query) return 1;
+  function fuzzyMatch(text, query) {
+    if (!query) return { score: 1, indices: [] };
     const t = (text || "").toLowerCase();
     const q = query.toLowerCase().trim();
-    if (!q) return 1;
-    if (t === q) return 120;
-    if (t.startsWith(q)) return 95;
+    if (!q) return { score: 1, indices: [] };
+    if (t === q) {
+      return { score: 120, indices: Array.from({ length: t.length }, (_, i) => i) };
+    }
+    if (t.startsWith(q)) {
+      return { score: 95, indices: Array.from({ length: q.length }, (_, i) => i) };
+    }
     const idx = t.indexOf(q);
-    if (idx !== -1) return 75 - Math.min(idx, 30);
+    if (idx !== -1) {
+      return {
+        score: 75 - Math.min(idx, 30),
+        indices: Array.from({ length: q.length }, (_, i) => idx + i)
+      };
+    }
 
     const tokens = q.split(/\s+/).filter(Boolean);
     if (tokens.length > 1 && tokens.every((tok) => t.includes(tok))) {
-      return 60;
+      const indices = [];
+      for (const tok of tokens) {
+        const ti = t.indexOf(tok);
+        if (ti !== -1) {
+          for (let j = 0; j < tok.length; j++) indices.push(ti + j);
+        }
+      }
+      return { score: 60, indices };
     }
 
     let qi = 0;
     let score = 0;
     let consecutive = 0;
+    const indices = [];
     for (let ti = 0; ti < t.length && qi < q.length; ti++) {
       if (t[ti] === q[qi]) {
+        indices.push(ti);
         qi++;
         consecutive++;
         score += 2 + consecutive;
@@ -148,7 +140,50 @@
         consecutive = 0;
       }
     }
-    return qi === q.length ? Math.min(50, score) : 0;
+    return qi === q.length ? { score: Math.min(50, score), indices } : { score: 0, indices: [] };
+  }
+
+  function renderHighlightedText(container, text, query) {
+    container.textContent = "";
+    const str = text || "";
+    const q = (query || "").trim();
+    if (!q) {
+      container.textContent = str;
+      return;
+    }
+
+    const { score, indices } = fuzzyMatch(str, q);
+    if (!score || !indices.length) {
+      container.textContent = str;
+      return;
+    }
+
+    const markSet = new Set(indices);
+    let buf = "";
+    let inMark = false;
+
+    const flush = () => {
+      if (!buf) return;
+      if (inMark) {
+        const mark = document.createElement("mark");
+        mark.className = "qc-hl";
+        mark.textContent = buf;
+        container.appendChild(mark);
+      } else {
+        container.appendChild(document.createTextNode(buf));
+      }
+      buf = "";
+    };
+
+    for (let i = 0; i < str.length; i++) {
+      const isMarked = markSet.has(i);
+      if (isMarked !== inMark) {
+        flush();
+        inMark = isMarked;
+      }
+      buf += str[i];
+    }
+    flush();
   }
 
   function buildStaticActions(activeTab) {
@@ -165,6 +200,7 @@
           badgeClass: "qc-badge-action",
           iconClass: "qc-icon-action",
           iconName: "pin",
+          enterVerb: "Run",
           run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "PIN_TAB", tabId: activeTab.id } })
         },
         {
@@ -177,6 +213,7 @@
           badgeClass: "qc-badge-action",
           iconClass: "qc-icon-action",
           iconName: activeTab.muted ? "volume" : "mute",
+          enterVerb: "Run",
           run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "MUTE_TAB", tabId: activeTab.id } })
         },
         {
@@ -189,6 +226,7 @@
           badgeClass: "qc-badge-action",
           iconClass: "qc-icon-action",
           iconName: "copy",
+          enterVerb: "Run",
           run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "DUPLICATE_TAB", tabId: activeTab.id } })
         },
         {
@@ -201,6 +239,7 @@
           badgeClass: "qc-badge-action",
           iconClass: "qc-icon-action",
           iconName: "link",
+          enterVerb: "Copy",
           run: async () => {
             if (activeTab.url && navigator.clipboard) {
               await navigator.clipboard.writeText(activeTab.url);
@@ -217,6 +256,7 @@
           badgeClass: "qc-badge-action",
           iconClass: "qc-icon-action",
           iconName: "x",
+          enterVerb: "Run",
           run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_OTHER_TABS" } })
         },
         {
@@ -229,6 +269,7 @@
           badgeClass: "qc-badge-action",
           iconClass: "qc-icon-action",
           iconName: "window",
+          enterVerb: "Run",
           run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "MOVE_TAB_NEW_WINDOW" } })
         },
         activeTab.groupId !== undefined && activeTab.groupId !== -1
@@ -238,10 +279,11 @@
               section: "Actions",
               title: "Ungroup Current Tab",
               subtitle: "Remove this tab from its tab group",
-              badge: "Group",
+              badge: "Action",
               badgeClass: "qc-badge-action",
               iconClass: "qc-icon-action",
               iconName: "layers",
+              enterVerb: "Run",
               run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "UNGROUP_CURRENT_TAB" } })
             }
           : {
@@ -250,10 +292,11 @@
               section: "Actions",
               title: "Add Current Tab to New Group",
               subtitle: "Create a new Chrome tab group with this tab",
-              badge: "Group",
+              badge: "Action",
               badgeClass: "qc-badge-action",
               iconClass: "qc-icon-action",
               iconName: "layers",
+              enterVerb: "Run",
               run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "GROUP_CURRENT_TAB" } })
             }
       );
@@ -270,6 +313,7 @@
         badgeClass: "qc-badge-action",
         iconClass: "qc-icon-action",
         iconName: "incognito",
+        enterVerb: "Run",
         run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "NEW_INCOGNITO" } })
       },
       {
@@ -282,6 +326,7 @@
         badgeClass: "qc-badge-action",
         iconClass: "qc-icon-bang",
         iconName: "zap",
+        enterVerb: "Open",
         run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "OPEN_OPTIONS" } })
       }
     );
@@ -314,26 +359,17 @@
 
   function parseModeAndQuery(raw, chipMode) {
     const trimmed = raw.trimStart();
-    if (trimmed.startsWith(">")) return { mode: "commands", query: trimmed.slice(1).trim(), label: "Commands" };
-    if (trimmed.startsWith("@")) return { mode: "tabs", query: trimmed.slice(1).trim(), label: "Tabs" };
-    if (trimmed.startsWith("*")) return { mode: "bookmarks", query: trimmed.slice(1).trim(), label: "Bookmarks" };
-    if (trimmed.startsWith("/h ")) return { mode: "history", query: trimmed.slice(3).trim(), label: "History" };
-    if (trimmed.startsWith("/g ")) return { mode: "groups", query: trimmed.slice(3).trim(), label: "Groups" };
-    if (trimmed.startsWith("/c ")) return { mode: "closed", query: trimmed.slice(3).trim(), label: "Closed" };
-    const modeLabels = {
-      all: "",
-      tabs: "Tabs",
-      groups: "Groups",
-      closed: "Closed",
-      bookmarks: "Bookmarks",
-      history: "History",
-      commands: "Commands"
-    };
-    return { mode: chipMode || "all", query: trimmed, label: modeLabels[chipMode] || "" };
+    if (trimmed.startsWith(">")) return { mode: "commands", query: trimmed.slice(1).trim(), prefixLabel: "Commands", isPrefix: true };
+    if (trimmed.startsWith("@")) return { mode: "tabs", query: trimmed.slice(1).trim(), prefixLabel: "Tabs", isPrefix: true };
+    if (trimmed.startsWith("*")) return { mode: "bookmarks", query: trimmed.slice(1).trim(), prefixLabel: "Bookmarks", isPrefix: true };
+    if (trimmed.startsWith("/h ")) return { mode: "history", query: trimmed.slice(3).trim(), prefixLabel: "History", isPrefix: true };
+    if (trimmed.startsWith("/g ")) return { mode: "groups", query: trimmed.slice(3).trim(), prefixLabel: "Groups", isPrefix: true };
+    if (trimmed.startsWith("/c ")) return { mode: "closed", query: trimmed.slice(3).trim(), prefixLabel: "Closed", isPrefix: true };
+    return { mode: chipMode || "all", query: trimmed, prefixLabel: "", isPrefix: false };
   }
 
   function buildResults(data, rawQuery, chipMode = "all") {
-    const { mode, query, label } = parseModeAndQuery(rawQuery, chipMode);
+    const { mode, query, prefixLabel, isPrefix } = parseModeAndQuery(rawQuery, chipMode);
     const items = [];
 
     const tabs = (data.tabs || []).map((t, idx) => ({
@@ -349,6 +385,7 @@
       badgeClass: "qc-badge-tab",
       iconClass: "qc-icon-tab",
       iconName: "globe",
+      enterVerb: "Switch",
       priority: (t.currentWindow ? 24 : 14) + Math.max(0, 12 - idx) * 0.2,
       run: () =>
         sendRuntimeMessage({
@@ -366,11 +403,12 @@
         section: "Tab Groups",
         groupColor: dotColor,
         title: `${g.title} (${g.tabCount} ${g.tabCount === 1 ? "tab" : "tabs"})`,
-        subtitle: g.collapsed ? "Collapsed — Enter to switch to group" : "Expanded — Enter to switch to group",
+        subtitle: g.collapsed ? "Collapsed — switch to first tab in group" : "Expanded — switch to first tab in group",
         badge: g.collapsed ? "Collapsed" : "Group",
         badgeClass: "qc-badge-tab",
         iconClass: "qc-icon-tab",
         iconName: "layers",
+        enterVerb: "Switch",
         priority: 15,
         run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "FOCUS_GROUP", groupId: g.id } })
       });
@@ -381,10 +419,11 @@
         groupColor: dotColor,
         title: `${g.collapsed ? "Expand" : "Collapse"} Group: ${g.title}`,
         subtitle: `Toggle ${g.tabCount}-tab group`,
-        badge: "Toggle",
+        badge: "Group",
         badgeClass: "qc-badge-action",
         iconClass: "qc-icon-action",
         iconName: "layers",
+        enterVerb: g.collapsed ? "Expand" : "Collapse",
         priority: 11,
         run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "TOGGLE_GROUP_COLLAPSE", groupId: g.id } })
       });
@@ -397,10 +436,11 @@
       title: c.title,
       subtitle: c.url,
       favIconUrl: c.favIconUrl,
-      badge: "Reopen",
+      badge: "Closed",
       badgeClass: "qc-badge-chrome",
       iconClass: "qc-icon-chrome",
       iconName: "rotateCcw",
+      enterVerb: "Reopen",
       priority: 13,
       run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "RESTORE_SESSION", sessionId: c.sessionId } })
     }));
@@ -424,6 +464,7 @@
           badgeClass: "qc-badge-bang",
           iconClass: "qc-icon-bang",
           iconName: "zap",
+          enterVerb: "Search",
           priority: 200,
           forceScore: 200,
           run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "OPEN_URL", url: targetUrl } })
@@ -441,6 +482,7 @@
         badgeClass: "qc-badge-bang",
         iconClass: "qc-icon-bang",
         iconName: "zap",
+        enterVerb: "Open",
         priority: exactBang ? 180 : 14,
         forceScore: exactBang ? 180 : 0,
         searchText: `${ql.bang} ${ql.title} ${ql.url}`,
@@ -460,6 +502,7 @@
       badgeClass: "qc-badge-chrome",
       iconClass: "qc-icon-chrome",
       iconName: "settings",
+      enterVerb: "Open",
       priority: 8,
       run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "OPEN_URL", url: p.url } })
     }));
@@ -474,6 +517,7 @@
       badgeClass: "qc-badge-bookmark",
       iconClass: "qc-icon-bookmark",
       iconName: "star",
+      enterVerb: "Open",
       priority: 6,
       searchText: `${b.title} ${b.url} ${b.folder || ""}`,
       run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "OPEN_URL", url: b.url } })
@@ -486,12 +530,23 @@
       title: h.title,
       subtitle: h.url,
       badge: "History",
-      badgeClass: "",
-      iconClass: "",
+      badgeClass: "qc-badge-history",
+      iconClass: "qc-icon-history",
       iconName: "history",
+      enterVerb: "Open",
       priority: 4,
       run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "OPEN_URL", url: h.url } })
     }));
+
+    const modeCounts = {
+      all: tabs.length + tabGroups.length + closedTabs.length + bookmarks.length + actions.length + chromePages.length,
+      tabs: tabs.length,
+      groups: tabGroups.length,
+      closed: closedTabs.length,
+      bookmarks: bookmarks.length,
+      history: history.length,
+      commands: actions.length + chromePages.length
+    };
 
     let pool = [];
     if (mode === "commands") {
@@ -522,7 +577,7 @@
         continue;
       }
       const haystack = item.searchText || `${item.title} ${item.subtitle || ""}`;
-      const score = fuzzyScore(haystack, query);
+      const { score } = fuzzyMatch(haystack, query);
       if (score > 0) {
         items.push({ ...item, _score: score + item.priority });
       }
@@ -539,9 +594,10 @@
             title: `Open URL: ${target}`,
             subtitle: "Navigate directly in a new tab",
             badge: "URL",
-            badgeClass: "qc-badge-bang",
-            iconClass: "qc-icon-bang",
+            badgeClass: "",
+            iconClass: "",
             iconName: "globe",
+            enterVerb: "Open",
             _score: 0.5,
             run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "OPEN_URL", url: target } })
           });
@@ -555,6 +611,7 @@
           badgeClass: "",
           iconClass: "",
           iconName: "search",
+          enterVerb: "Search",
           _score: 0,
           run: () =>
             sendRuntimeMessage({
@@ -565,7 +622,14 @@
       }
     }
 
-    return { modeLabel: label, activeMode: mode, cleanQuery: query, isGrouped: !query && mode === "all", items: items.slice(0, 40) };
+    return {
+      prefixLabel: isPrefix ? prefixLabel : "",
+      activeMode: mode,
+      cleanQuery: query,
+      isGrouped: !query && mode === "all",
+      modeCounts,
+      items: items.slice(0, 40)
+    };
   }
 
   window.__QuickCmdCreatePalette = function createPalette({ container, isPopup = false, onClose }) {
@@ -574,31 +638,34 @@
 
     const modal = document.createElement("div");
     modal.className = "qc-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", "QuickCmd command palette");
     backdrop.appendChild(modal);
 
     const searchRow = document.createElement("div");
     searchRow.className = "qc-search-row";
 
-    const searchIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    searchIcon.setAttribute("viewBox", "0 0 24 24");
-    searchIcon.setAttribute("fill", "none");
-    searchIcon.setAttribute("stroke", "currentColor");
-    searchIcon.setAttribute("stroke-width", "2");
+    const searchIcon = createSvgIcon("search");
     searchIcon.classList.add("qc-search-icon");
-    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", "11");
-    circle.setAttribute("cy", "11");
-    circle.setAttribute("r", "8");
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", "m21 21-4.3-4.3");
-    searchIcon.append(circle, path);
 
+    const listId = "qc-results-listbox";
     const input = document.createElement("input");
     input.className = "qc-input";
     input.type = "text";
-    input.placeholder = "Search tabs, bookmarks, bangs (gh), or > commands…";
+    input.placeholder = "Search tabs, bookmarks, history, or type > for commands…";
     input.autocomplete = "off";
     input.spellcheck = false;
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-expanded", "true");
+    input.setAttribute("aria-controls", listId);
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "qc-clear-btn";
+    clearBtn.title = "Clear search";
+    clearBtn.textContent = "✕";
+    clearBtn.style.display = "none";
 
     const modePill = document.createElement("span");
     modePill.className = "qc-mode-pill";
@@ -608,16 +675,16 @@
     escPill.className = "qc-esc-pill";
     escPill.textContent = "ESC";
 
-    searchRow.append(searchIcon, input, modePill, escPill);
+    searchRow.append(searchIcon, input, clearBtn, modePill, escPill);
 
     const CHIP_MODES = [
-      { id: "all", label: "All" },
-      { id: "tabs", label: "Tabs" },
-      { id: "groups", label: "Groups" },
-      { id: "closed", label: "Closed" },
-      { id: "bookmarks", label: "Bookmarks" },
-      { id: "history", label: "History" },
-      { id: "commands", label: "Commands" }
+      { id: "all", label: "All", icon: "search" },
+      { id: "tabs", label: "Tabs", icon: "globe" },
+      { id: "groups", label: "Groups", icon: "layers" },
+      { id: "closed", label: "Closed", icon: "rotateCcw" },
+      { id: "bookmarks", label: "Bookmarks", icon: "star" },
+      { id: "history", label: "History", icon: "history" },
+      { id: "commands", label: "Commands", icon: "zap" }
     ];
 
     let chipMode = "all";
@@ -641,52 +708,106 @@
 
     const listEl = document.createElement("div");
     listEl.className = "qc-list";
+    listEl.id = listId;
+    listEl.setAttribute("role", "listbox");
+
+    const liveRegion = document.createElement("div");
+    liveRegion.className = "qc-sr-only";
+    liveRegion.setAttribute("aria-live", "polite");
 
     const footer = document.createElement("div");
     footer.className = "qc-footer";
 
     const hints = document.createElement("div");
     hints.className = "qc-hints";
-    const hintSpecs = [
-      ["↵", "Open"],
-      ["⌘⌫", "Close"],
-      ["⌘P", "Pin"],
-      ["⌘M", "Mute"],
-      ["⌘D", "Duplicate"]
-    ];
-    for (const [key, text] of hintSpecs) {
-      const span = document.createElement("span");
-      span.className = "qc-hint";
-      const kbd = document.createElement("kbd");
-      kbd.className = "qc-kbd";
-      kbd.textContent = key;
-      span.append(kbd, document.createTextNode(text));
-      hints.appendChild(span);
+
+    const prefixLegend = document.createElement("div");
+    prefixLegend.className = "qc-prefix-legend";
+    for (const p of [">", "@", "*", "/h", "/g", "/c"]) {
+      const k = document.createElement("kbd");
+      k.className = "qc-kbd";
+      k.textContent = p;
+      prefixLegend.appendChild(k);
     }
+    footer.append(hints, prefixLegend);
 
-    const prefixHint = document.createElement("span");
-    prefixHint.textContent = "> cmd  @ tabs  * bkmk  /h hist";
-    footer.append(hints, prefixHint);
-
-    modal.append(searchRow, chipsBar, listEl, footer);
+    modal.append(searchRow, chipsBar, listEl, liveRegion, footer);
     container.appendChild(backdrop);
 
     let data = { tabs: [], tabGroups: [], closedTabs: [], quickLinks: [], chromePages: [], bookmarks: [], history: [], activeTab: null };
     let currentItems = [];
     let selectedIndex = 0;
+    let isClosing = false;
 
-    function render() {
-      const { modeLabel, activeMode, cleanQuery, isGrouped, items } = buildResults(data, input.value, chipMode);
-      for (const [id, btn] of chipButtons.entries()) {
-        btn.classList.toggle("qc-chip-active", id === activeMode);
+    function closeWithMotion() {
+      if (isClosing) return;
+      isClosing = true;
+      if (isPopup) {
+        onClose();
+        return;
       }
+      backdrop.classList.add("qc-closing");
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        onClose();
+      };
+      backdrop.addEventListener("animationend", finish, { once: true });
+      setTimeout(finish, 120);
+    }
+
+    function updateFooter(selected) {
+      hints.textContent = "";
+      let specs = [["↵", "Open"]];
+      if (selected) {
+        if (selected.kind === "tab") {
+          specs = [
+            ["↵", "Switch"],
+            ["⌘⌫", "Close"],
+            ["⌘P", "Pin"],
+            ["⌘M", "Mute"],
+            ["⌘D", "Duplicate"]
+          ];
+        } else {
+          specs = [["↵", selected.enterVerb || "Open"]];
+        }
+      }
+      for (const [key, text] of specs) {
+        const span = document.createElement("span");
+        span.className = "qc-hint";
+        const kbd = document.createElement("kbd");
+        kbd.className = "qc-kbd";
+        kbd.textContent = key;
+        span.append(kbd, document.createTextNode(text));
+        hints.appendChild(span);
+      }
+    }
+
+    function render(preserveId = null) {
+      const { prefixLabel, activeMode, cleanQuery, isGrouped, modeCounts, items } = buildResults(data, input.value, chipMode);
       currentItems = items;
+
+      if (preserveId) {
+        const foundIdx = currentItems.findIndex((it) => it.id === preserveId);
+        if (foundIdx !== -1) selectedIndex = foundIdx;
+      }
       if (selectedIndex >= currentItems.length) {
         selectedIndex = Math.max(0, currentItems.length - 1);
       }
 
-      if (modeLabel) {
-        modePill.textContent = modeLabel;
+      clearBtn.style.display = input.value ? "flex" : "none";
+
+      for (const c of CHIP_MODES) {
+        const btn = chipButtons.get(c.id);
+        const isActive = c.id === activeMode;
+        btn.classList.toggle("qc-chip-active", isActive);
+        const count = modeCounts[c.id];
+        btn.textContent = isActive && typeof count === "number" ? `${c.label} · ${count}` : c.label;
+      }
+
+      if (prefixLabel) {
+        modePill.textContent = prefixLabel;
         modePill.style.display = "inline-block";
       } else {
         modePill.style.display = "none";
@@ -694,10 +815,65 @@
 
       listEl.textContent = "";
       if (!currentItems.length) {
+        input.removeAttribute("aria-activedescendant");
+        updateFooter(null);
+
         const empty = document.createElement("div");
         empty.className = "qc-empty";
-        empty.textContent = "No matching tabs, bookmarks, or commands.";
+
+        const modeObj = CHIP_MODES.find((c) => c.id === activeMode) || CHIP_MODES[0];
+        const emptyIcon = createSvgIcon(modeObj.icon);
+        emptyIcon.classList.add("qc-empty-icon");
+        empty.appendChild(emptyIcon);
+
+        const msg = document.createElement("div");
+        msg.textContent = cleanQuery
+          ? `No ${modeObj.label.toLowerCase()} matches "${cleanQuery}".`
+          : `No ${modeObj.label.toLowerCase()} items yet.`;
+        empty.appendChild(msg);
+
+        if (cleanQuery || activeMode !== "all") {
+          const actions = document.createElement("div");
+          actions.className = "qc-empty-actions";
+
+          if (cleanQuery) {
+            const googleBtn = document.createElement("button");
+            googleBtn.type = "button";
+            googleBtn.className = "qc-empty-btn";
+            googleBtn.textContent = `Search Google for "${cleanQuery}"`;
+            googleBtn.addEventListener("click", async () => {
+              await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "OPEN_URL", url: `https://www.google.com/search?q=${encodeURIComponent(cleanQuery)}` }
+              });
+              closeWithMotion();
+            });
+            actions.appendChild(googleBtn);
+          }
+
+          if (activeMode !== "all") {
+            const allBtn = document.createElement("button");
+            allBtn.type = "button";
+            allBtn.className = "qc-empty-btn";
+            allBtn.textContent = "Search in All instead";
+            allBtn.addEventListener("click", () => {
+              chipMode = "all";
+              const raw = input.value.trimStart();
+              if (/^(>|@|\*|\/[hgc]\s)/.test(raw)) {
+                input.value = cleanQuery;
+              }
+              selectedIndex = 0;
+              render();
+              input.focus();
+            });
+            actions.appendChild(allBtn);
+          }
+
+          empty.appendChild(actions);
+        }
+
         listEl.appendChild(empty);
+        liveRegion.textContent = msg.textContent;
         return;
       }
 
@@ -707,17 +883,22 @@
           lastSection = item.section;
           const sec = document.createElement("div");
           sec.className = "qc-section-label";
+          sec.setAttribute("aria-hidden", "true");
           sec.textContent = item.section;
           listEl.appendChild(sec);
         }
 
         const row = document.createElement("div");
+        const optionId = `qc-opt-${item.id}`;
+        row.id = optionId;
         row.className = `qc-item${idx === selectedIndex ? " qc-selected" : ""}`;
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", idx === selectedIndex ? "true" : "false");
         row.dataset.index = String(idx);
 
         const iconBox = document.createElement("div");
         iconBox.className = `qc-item-icon ${item.iconClass || ""}`;
-        if (item.favIconUrl && item.favIconUrl.startsWith("http")) {
+        if (item.favIconUrl && /^(https?:|chrome:|data:)/i.test(item.favIconUrl)) {
           const img = document.createElement("img");
           img.src = item.favIconUrl;
           img.alt = "";
@@ -734,10 +915,12 @@
         main.className = "qc-item-main";
         const title = document.createElement("div");
         title.className = "qc-item-title";
+        title.title = item.title || "";
         renderHighlightedText(title, item.title, cleanQuery);
 
         const sub = document.createElement("div");
         sub.className = "qc-item-sub";
+        sub.title = item.subtitle || "";
         sub.textContent = item.subtitle || "";
         main.append(title, sub);
 
@@ -758,21 +941,23 @@
 
         const enterHint = document.createElement("span");
         enterHint.className = "qc-enter-hint";
-        enterHint.textContent = "↵";
+        enterHint.textContent = `↵ ${item.enterVerb || "Open"}`;
         meta.appendChild(enterHint);
 
         if (item.kind === "tab") {
           const closeBtn = document.createElement("button");
+          closeBtn.type = "button";
           closeBtn.className = "qc-tab-btn";
           closeBtn.title = "Close tab (⌘⌫)";
           closeBtn.textContent = "✕";
           closeBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
+            const currentId = currentItems[selectedIndex]?.id;
             await sendRuntimeMessage({
               type: "EXECUTE_ACTION",
               payload: { action: "CLOSE_TAB", tabId: item.tabId }
             });
-            await refreshData();
+            await refreshData(currentId);
           });
           meta.appendChild(closeBtn);
         }
@@ -784,41 +969,63 @@
         });
         row.addEventListener("click", async () => {
           await item.run();
-          onClose();
+          closeWithMotion();
         });
 
         listEl.appendChild(row);
       });
 
-      const selectedEl = listEl.querySelector(".qc-selected");
-      if (selectedEl) {
-        selectedEl.scrollIntoView({ block: "nearest" });
+      const selectedItem = currentItems[selectedIndex];
+      if (selectedItem) {
+        input.setAttribute("aria-activedescendant", `qc-opt-${selectedItem.id}`);
       }
+      updateFooter(selectedItem);
+      liveRegion.textContent = `${currentItems.length} results`;
+
+      const selectedEl = listEl.querySelector(".qc-selected");
+      if (selectedEl) selectedEl.scrollIntoView({ block: "nearest" });
     }
 
     function updateSelection() {
       const rows = listEl.querySelectorAll(".qc-item");
       rows.forEach((r, i) => {
-        r.classList.toggle("qc-selected", i === selectedIndex);
+        const isSel = i === selectedIndex;
+        r.classList.toggle("qc-selected", isSel);
+        r.setAttribute("aria-selected", isSel ? "true" : "false");
       });
+      const selectedItem = currentItems[selectedIndex];
+      if (selectedItem) {
+        input.setAttribute("aria-activedescendant", `qc-opt-${selectedItem.id}`);
+      }
+      updateFooter(selectedItem);
       const selectedEl = listEl.querySelector(".qc-selected");
       if (selectedEl) selectedEl.scrollIntoView({ block: "nearest" });
     }
 
-    async function refreshData() {
+    async function refreshData(preserveId = null) {
       const res = await sendRuntimeMessage({ type: "GET_PALETTE_DATA", query: input.value });
       if (res.ok && res.data) {
         data = res.data;
-        render();
+        render(preserveId);
       }
     }
+
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      selectedIndex = 0;
+      render();
+      input.focus();
+    });
 
     let historyTimer = null;
     input.addEventListener("input", () => {
       selectedIndex = 0;
       render();
       clearTimeout(historyTimer);
-      historyTimer = setTimeout(refreshData, 140);
+      historyTimer = setTimeout(() => {
+        const currentId = currentItems[selectedIndex]?.id;
+        refreshData(currentId);
+      }, 140);
     });
 
     input.addEventListener("keydown", async (e) => {
@@ -828,20 +1035,20 @@
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        onClose();
+        closeWithMotion();
         return;
       }
 
-      if (e.key === "Tab") {
-        e.preventDefault();
-        const curIdx = CHIP_MODES.findIndex((c) => c.id === chipMode);
-        const nextIdx = e.shiftKey
-          ? (curIdx - 1 + CHIP_MODES.length) % CHIP_MODES.length
-          : (curIdx + 1) % CHIP_MODES.length;
-        chipMode = CHIP_MODES[nextIdx].id;
-        selectedIndex = 0;
-        render();
-        return;
+      if (e.key === "Backspace" && !mod) {
+        const trimmed = input.value.trimStart();
+        if (trimmed === ">" || trimmed === "@" || trimmed === "*" || trimmed === "/h" || trimmed === "/g" || trimmed === "/c") {
+          e.preventDefault();
+          input.value = "";
+          chipMode = "all";
+          selectedIndex = 0;
+          render();
+          return;
+        }
       }
 
       if (e.key === "ArrowDown" || (e.ctrlKey && e.key.toLowerCase() === "n")) {
@@ -862,15 +1069,44 @@
         return;
       }
 
+      if (e.key === "Home" && currentItems.length) {
+        e.preventDefault();
+        selectedIndex = 0;
+        updateSelection();
+        return;
+      }
+
+      if (e.key === "End" && currentItems.length) {
+        e.preventDefault();
+        selectedIndex = currentItems.length - 1;
+        updateSelection();
+        return;
+      }
+
+      if (e.key === "PageDown" && currentItems.length) {
+        e.preventDefault();
+        selectedIndex = Math.min(currentItems.length - 1, selectedIndex + 8);
+        updateSelection();
+        return;
+      }
+
+      if (e.key === "PageUp" && currentItems.length) {
+        e.preventDefault();
+        selectedIndex = Math.max(0, selectedIndex - 8);
+        updateSelection();
+        return;
+      }
+
       if (e.key === "Enter" && selected) {
         e.preventDefault();
         await selected.run();
-        onClose();
+        closeWithMotion();
         return;
       }
 
       if (mod && selected && selected.kind === "tab") {
         const k = e.key.toLowerCase();
+        const currentId = selected.id;
         if (e.key === "Backspace") {
           e.preventDefault();
           await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_TAB", tabId: selected.tabId } });
@@ -878,22 +1114,22 @@
         } else if (k === "p") {
           e.preventDefault();
           await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "PIN_TAB", tabId: selected.tabId } });
-          await refreshData();
+          await refreshData(currentId);
         } else if (k === "m") {
           e.preventDefault();
           await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "MUTE_TAB", tabId: selected.tabId } });
-          await refreshData();
+          await refreshData(currentId);
         } else if (k === "d") {
           e.preventDefault();
           await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "DUPLICATE_TAB", tabId: selected.tabId } });
-          await refreshData();
+          await refreshData(currentId);
         }
       }
     });
 
     if (!isPopup) {
       backdrop.addEventListener("click", (e) => {
-        if (e.target === backdrop) onClose();
+        if (e.target === backdrop) closeWithMotion();
       });
     }
 
@@ -902,7 +1138,7 @@
 
     return {
       destroy() {
-        backdrop.remove();
+        closeWithMotion();
       },
       focus() {
         input.focus();
