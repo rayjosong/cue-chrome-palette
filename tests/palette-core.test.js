@@ -624,8 +624,7 @@ test("buildResults surfaces act-group-base-domain, act-close-base-domain, and ac
   assert.equal(closeBaseAct.priority, 11.6);
   assert.deepEqual(closeBaseAct.actionDescriptor, {
     type: "EXECUTE_ACTION",
-    payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: "google.com" },
-    keepsOpen: true
+    payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: "google.com" }
   });
 
   // Other multi-tab site in baseDomainGroups: act-close-site-github.com
@@ -637,8 +636,7 @@ test("buildResults surfaces act-group-base-domain, act-close-base-domain, and ac
   assert.equal(closeSiteAct.priority, 9.2);
   assert.deepEqual(closeSiteAct.actionDescriptor, {
     type: "EXECUTE_ACTION",
-    payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: "github.com" },
-    keepsOpen: true
+    payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: "github.com" }
   });
 });
 
@@ -667,8 +665,7 @@ test("buildResults surfaces act-consolidate-groups when groups exist and counts 
   assert.equal(act.badge, "Window");
   assert.deepEqual(act.actionDescriptor, {
     type: "EXECUTE_ACTION",
-    payload: { action: "CONSOLIDATE_GROUPS_AND_SEPARATE_TABS" },
-    keepsOpen: true
+    payload: { action: "CONSOLIDATE_GROUPS_AND_SEPARATE_TABS" }
   });
 
   // Should not appear when there are no tab groups
@@ -788,7 +785,36 @@ test("buildResults surfaces act-split-tabs when 2 or more tabs are open", () => 
   assert.ok(unsplitAct, "act-unsplit-tab should appear when activeTab has a splitViewId");
   assert.deepEqual(unsplitAct.actionDescriptor, {
     type: "EXECUTE_ACTION",
-    payload: { action: "UNSPLIT_TAB", splitViewId: 42 },
-    keepsOpen: true
+    payload: { action: "UNSPLIT_TAB", splitViewId: 42 }
   });
+});
+
+test("command actions and copy descriptors do not keep the palette open after running", () => {
+  const data = {
+    activeTab: { id: 1, windowId: 10, title: "Example", url: "https://sub.example.com/page?utm_source=x", groupId: 5, splitViewId: 42 },
+    tabs: [
+      { id: 1, windowId: 10, title: "Example", url: "https://sub.example.com/page?utm_source=x", active: true, audible: true, groupId: 5, splitViewId: 42 },
+      { id: 2, windowId: 10, title: "Example 2", url: "https://sub.example.com/other", audible: false, groupId: -1 },
+      { id: 3, windowId: 11, title: "Root", url: "https://example.com/", audible: false, groupId: -1 }
+    ],
+    tabGroups: [{ id: 5, title: "Work", color: "blue", currentWindow: true, tabCount: 1 }],
+    windows: [
+      { id: 10, current: true, tabCount: 2 },
+      { id: 11, current: false, tabCount: 1 }
+    ],
+    bookmarks: [],
+    themes: [{ id: "theme-1", name: "Dark Theme", enabled: false }],
+    extensions: [{ id: "ext-1", name: "Test Ext", enabled: true }]
+  };
+
+  for (const query of [">", "/t", "/e"]) {
+    const res = Core.buildResults(data, query, "all");
+    for (const item of res.items) {
+      const type = item.actionDescriptor?.type;
+      if (type === "EXECUTE_ACTION" || type === "COPY_TEXT") {
+        assert.notEqual(item.keepsOpen, true, `${item.id} should not have keepsOpen: true`);
+        assert.notEqual(item.actionDescriptor.keepsOpen, true, `${item.id} actionDescriptor should not have keepsOpen: true`);
+      }
+    }
+  }
 });

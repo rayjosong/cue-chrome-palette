@@ -614,12 +614,10 @@
           iconName: "mute",
           enterVerb: "Mute",
           priority: 14,
-          keepsOpen: true,
           searchText: "mute all audible tabs sound silence",
           actionDescriptor: {
             type: "EXECUTE_ACTION",
-            payload: { action: "MUTE_AUDIBLE_TABS" },
-            keepsOpen: true
+            payload: { action: "MUTE_AUDIBLE_TABS" }
           }
         }
       );
@@ -637,12 +635,10 @@
       iconName: "mute",
       enterVerb: "Mute",
       priority: 10,
-      keepsOpen: true,
       searchText: "mute all other tabs unmuted",
       actionDescriptor: {
         type: "EXECUTE_ACTION",
-        payload: { action: "MUTE_OTHER_TABS" },
-        keepsOpen: true
+        payload: { action: "MUTE_OTHER_TABS" }
       }
     });
 
@@ -796,14 +792,12 @@
             iconName: "star",
             enterVerb: isBookmarked ? "Remove" : "Bookmark",
             priority: 9.8,
-            keepsOpen: true,
             searchText: isBookmarked
               ? "remove bookmark unbookmark current page"
               : "bookmark current page save star",
             actionDescriptor: {
               type: "EXECUTE_ACTION",
-              payload: { action: "TOGGLE_BOOKMARK", url: activeTab.url, title: activeTab.title },
-              keepsOpen: true
+              payload: { action: "TOGGLE_BOOKMARK", url: activeTab.url, title: activeTab.title }
             }
           },
           {
@@ -878,12 +872,10 @@
           iconName: "split",
           enterVerb: "Unsplit",
           priority: 9.45,
-          keepsOpen: true,
           searchText: "unsplit current tab separate split view",
           actionDescriptor: {
             type: "EXECUTE_ACTION",
-            payload: { action: "UNSPLIT_TAB", splitViewId: activeTab.splitViewId },
-            keepsOpen: true
+            payload: { action: "UNSPLIT_TAB", splitViewId: activeTab.splitViewId }
           }
         });
       }
@@ -943,12 +935,10 @@
             iconName: "window",
             enterVerb: "Merge",
             priority: 9.1,
-            keepsOpen: true,
             searchText: "merge all windows into current combine",
             actionDescriptor: {
               type: "EXECUTE_ACTION",
-              payload: { action: "MERGE_ALL_WINDOWS" },
-              keepsOpen: true
+              payload: { action: "MERGE_ALL_WINDOWS" }
             }
           }
         );
@@ -971,12 +961,10 @@
           iconName: "layers",
           enterVerb: "Organize",
           priority: 9.15,
-          keepsOpen: true,
           searchText: "consolidate groups here separate unpinned ungrouped tabs another window organize",
           actionDescriptor: {
             type: "EXECUTE_ACTION",
-            payload: { action: "CONSOLIDATE_GROUPS_AND_SEPARATE_TABS" },
-            keepsOpen: true
+            payload: { action: "CONSOLIDATE_GROUPS_AND_SEPARATE_TABS" }
           }
         });
       }
@@ -1017,12 +1005,10 @@
           iconName: "x",
           enterVerb: "Close",
           priority: 11.5,
-          keepsOpen: true,
           searchText: `close all domain tabs ${analysis.activeDomain}`,
           actionDescriptor: {
             type: "EXECUTE_ACTION",
-            payload: { action: "CLOSE_DOMAIN_TABS", domain: analysis.activeDomain },
-            keepsOpen: true
+            payload: { action: "CLOSE_DOMAIN_TABS", domain: analysis.activeDomain }
           }
         }
       );
@@ -1063,12 +1049,10 @@
           iconName: "x",
           enterVerb: "Close",
           priority: 11.6,
-          keepsOpen: true,
           searchText: `close all base website domain tabs ${analysis.activeBaseDomain}`,
           actionDescriptor: {
             type: "EXECUTE_ACTION",
-            payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: analysis.activeBaseDomain },
-            keepsOpen: true
+            payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: analysis.activeBaseDomain }
           }
         }
       );
@@ -1089,12 +1073,10 @@
             iconName: "x",
             enterVerb: "Close",
             priority: 9.2,
-            keepsOpen: true,
             searchText: `close all base website domain tabs ${bg.baseDomain}`,
             actionDescriptor: {
               type: "EXECUTE_ACTION",
-              payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: bg.baseDomain },
-              keepsOpen: true
+              payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: bg.baseDomain }
             }
           });
         }
@@ -1117,12 +1099,10 @@
         iconName: "x",
         enterVerb: "Clean Up",
         priority: analysis.duplicateCount > 0 ? 15 : 9.5,
-        keepsOpen: true,
         searchText: "close duplicate tabs dedup cleanup duplicates",
         actionDescriptor: {
           type: "EXECUTE_ACTION",
-          payload: { action: "CLOSE_DUPLICATE_TABS" },
-          keepsOpen: true
+          payload: { action: "CLOSE_DUPLICATE_TABS" }
         }
       },
       {
@@ -1418,13 +1398,11 @@
       iconClass: "qc-icon-theme",
       iconName: "palette",
       enterVerb: "Activate",
-      keepsOpen: true,
       priority: t.enabled ? 11 : 9,
       searchText: `theme ${t.name} ${t.description || ""}`,
       actionDescriptor: {
         type: "EXECUTE_ACTION",
-        payload: { action: "SWITCH_CHROME_THEME", themeId: t.id },
-        keepsOpen: true
+        payload: { action: "SWITCH_CHROME_THEME", themeId: t.id }
       }
     }));
 
@@ -1441,13 +1419,11 @@
         iconClass: "qc-icon-theme",
         iconName: "rotateCcw",
         enterVerb: "Restore",
-        keepsOpen: true,
         priority: 8.5,
         searchText: "theme restore default chrome reset appearance",
         actionDescriptor: {
           type: "EXECUTE_ACTION",
-          payload: { action: "SWITCH_CHROME_THEME", themeId: null },
-          keepsOpen: true
+          payload: { action: "SWITCH_CHROME_THEME", themeId: null }
         }
       });
     }
@@ -1514,14 +1490,12 @@
             iconClass: "qc-icon-ext",
             iconName: "puzzle",
             enterVerb: ext.enabled ? "Disable" : "Enable",
-            keepsOpen: true,
             priority: ext.enabled ? 10 : 8,
             optionsUrl: ext.optionsUrl || "",
             searchText: `extension ${ext.name} ${ext.description || ""} ${ext.version || ""}`,
             actionDescriptor: {
               type: "EXECUTE_ACTION",
-              payload: { action: "TOGGLE_EXTENSION", extensionId: ext.id },
-              keepsOpen: true
+              payload: { action: "TOGGLE_EXTENSION", extensionId: ext.id }
             }
           }));
 

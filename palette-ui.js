@@ -570,8 +570,7 @@
         case "COPY_TEXT": {
           const ok = await copyToClipboard(descriptor.text || "");
           showToast(ok ? (descriptor.toast || "Copied URL to clipboard") : "Failed to copy");
-          input.focus();
-          return { closesPalette: false };
+          return { closesPalette: true };
         }
         case "EXECUTE_ACTION": {
           const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: descriptor.payload });
@@ -598,8 +597,7 @@
           item.actionDescriptor?.type === "OPEN_WINDOW_PICKER" ||
           item.actionDescriptor?.type === "OPEN_SPLIT_PICKER" ||
           item.actionDescriptor?.type === "DRILL_GROUP" ||
-          item.actionDescriptor?.type === "ENTER_MODE" ||
-          item.actionDescriptor?.type === "COPY_TEXT"
+          item.actionDescriptor?.type === "ENTER_MODE"
       );
       return {
         ...item,
@@ -629,7 +627,7 @@
           {
             title: "Reload Tab",
             iconName: "rotateCcw",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "RELOAD_TAB", tabId: item.tabId, bypassCache: false } });
               if (res?.toast) showToast(res.toast);
@@ -638,7 +636,7 @@
           {
             title: "Hard Reload Tab",
             iconName: "rotateCcw",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "RELOAD_TAB", tabId: item.tabId, bypassCache: true } });
               if (res?.toast) showToast(res.toast);
@@ -670,7 +668,7 @@
             title: "Pin / Unpin Tab",
             shortcut: `${modSymbol}P`,
             iconName: "pin",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "PIN_TAB", tabId: item.tabId } });
               if (res?.toast) showToast(res.toast);
@@ -680,7 +678,7 @@
             title: "Mute / Unmute Tab",
             shortcut: `${modSymbol}M`,
             iconName: "mute",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "MUTE_TAB", tabId: item.tabId } });
               if (res?.toast) showToast(res.toast);
@@ -690,7 +688,7 @@
             title: "Duplicate Tab",
             shortcut: `${modSymbol}D`,
             iconName: "copy",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "DUPLICATE_TAB", tabId: item.tabId } });
               if (res?.toast) showToast(res.toast);
@@ -700,7 +698,7 @@
             title: "Copy Tab URL",
             shortcut: `${modSymbol}C`,
             iconName: "link",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               if (item.subtitle && navigator.clipboard) {
                 await navigator.clipboard.writeText(item.subtitle);
@@ -713,7 +711,7 @@
           list.push({
             title: isBookmarked ? "Remove Bookmark" : "Bookmark Tab",
             iconName: "star",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({
                 type: "EXECUTE_ACTION",
@@ -747,7 +745,7 @@
           list.push({
             title: "Unsplit Tab",
             iconName: "split",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({
                 type: "EXECUTE_ACTION",
@@ -776,11 +774,10 @@
         list.push({
           title: "Copy Tab URL",
           iconName: "link",
-          closesPalette: false,
+          closesPalette: true,
           run: async () => {
             const ok = await copyToClipboard(item.subtitle || "");
             showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
-            input.focus();
           }
         });
         if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
@@ -788,21 +785,19 @@
             {
               title: "Copy as Markdown",
               iconName: "copy",
-              closesPalette: false,
+              closesPalette: true,
               run: async () => {
                 const ok = await copyToClipboard(Core.formatMarkdownLink(item.title, item.subtitle));
                 showToast(ok ? "Copied Markdown link to clipboard" : "Failed to copy");
-                input.focus();
               }
             },
             {
               title: "Copy Clean URL",
               iconName: "link",
-              closesPalette: false,
+              closesPalette: true,
               run: async () => {
                 const ok = await copyToClipboard(Core.stripTrackingParams(item.subtitle));
                 showToast(ok ? "Copied clean URL to clipboard" : "Failed to copy");
-                input.focus();
               }
             }
           );
@@ -811,7 +806,7 @@
           const closeDomainAction = {
             title: `Close All ${tabDomain} Tabs (${tabAnalysis.domainCount})`,
             iconName: "x",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({
                 type: "EXECUTE_ACTION",
@@ -861,7 +856,7 @@
               title: `Close All ${tabBaseDomain} Website Tabs (${tabAnalysis.baseDomainCount})`,
               shortcut: shiftDelSymbol,
               iconName: "x",
-              closesPalette: false,
+              closesPalette: true,
               run: async () => {
                 const res = await sendRuntimeMessage({
                   type: "EXECUTE_ACTION",
@@ -876,7 +871,7 @@
           title: "Close Tab",
           shortcut: delSymbol,
           iconName: "x",
-          closesPalette: false,
+          closesPalette: true,
           run: async () => {
             const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_TAB", tabId: item.tabId } });
             if (res?.toast) showToast(res.toast);
@@ -911,7 +906,7 @@
           {
             title: item.groupCollapsed ? "Expand Group" : "Collapse Group",
             iconName: "layers",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "TOGGLE_GROUP_COLLAPSE", groupId: item.groupId } });
               showToast(item.groupCollapsed ? "Expanded group" : "Collapsed group");
@@ -920,21 +915,19 @@
           {
             title: "Ungroup All Tabs",
             iconName: "layers",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "UNGROUP_ALL_IN_GROUP", groupId: item.groupId } });
               if (res?.toast) showToast(res.toast);
-              await refreshData();
             }
           },
           {
             title: "Close All Tabs in Group",
             iconName: "x",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_GROUP_TABS", groupId: item.groupId } });
               if (res?.toast) showToast(res.toast);
-              await refreshData();
             }
           }
         );
@@ -942,7 +935,7 @@
         list.push({
           title: item.enterVerb || "Toggle Extension",
           iconName: "puzzle",
-          closesPalette: false,
+          closesPalette: true,
           run: () => item.run()
         });
         if (item.optionsUrl) {
@@ -970,7 +963,7 @@
           {
             title: "Show in Folder",
             iconName: "window",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({
                 type: "EXECUTE_ACTION",
@@ -985,11 +978,10 @@
           list.push({
             title: "Copy Download URL",
             iconName: "link",
-            closesPalette: false,
+            closesPalette: true,
             run: async () => {
               const ok = await copyToClipboard(dUrl);
               showToast(ok ? "Copied Download URL to clipboard" : "Failed to copy");
-              input.focus();
             }
           });
         }
@@ -1007,31 +999,28 @@
               title: "Copy URL",
               shortcut: `${modSymbol}C`,
               iconName: "link",
-              closesPalette: false,
+              closesPalette: true,
               run: async () => {
                 const ok = await copyToClipboard(item.subtitle || "");
                 showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
-                input.focus();
               }
             },
             {
               title: "Copy as Markdown",
               iconName: "copy",
-              closesPalette: false,
+              closesPalette: true,
               run: async () => {
                 const ok = await copyToClipboard(Core.formatMarkdownLink(item.title, item.subtitle));
                 showToast(ok ? "Copied Markdown link to clipboard" : "Failed to copy");
-                input.focus();
               }
             },
             {
               title: "Copy Clean URL",
               iconName: "link",
-              closesPalette: false,
+              closesPalette: true,
               run: async () => {
                 const ok = await copyToClipboard(Core.stripTrackingParams(item.subtitle));
                 showToast(ok ? "Copied clean URL to clipboard" : "Failed to copy");
-                input.focus();
               }
             }
           );
@@ -1282,10 +1271,9 @@
         customColor: colorHex,
         iconName: "plus",
         enterVerb: "Create",
-        keepsOpen: true,
         run: async () => {
           const tabIds = groupPickerContext.tabIds;
-          const res = await sendRuntimeMessage({
+          await sendRuntimeMessage({
             type: "EXECUTE_ACTION",
             payload: {
               action: "CREATE_TAB_GROUP",
@@ -1294,11 +1282,6 @@
               color: selectedGroupColor
             }
           });
-          groupPickerContext = null;
-          input.value = "";
-          input.placeholder = defaultPlaceholder;
-          if (res?.toast) showToast(res.toast);
-          await refreshData();
         }
       };
 
@@ -1319,10 +1302,9 @@
           groupColor: gHex,
           iconName: "layers",
           enterVerb: "Assign",
-          keepsOpen: true,
           run: async () => {
             const tabIds = groupPickerContext.tabIds;
-            const res = await sendRuntimeMessage({
+            await sendRuntimeMessage({
               type: "EXECUTE_ACTION",
               payload: {
                 action: "ASSIGN_TAB_TO_GROUP",
@@ -1330,11 +1312,6 @@
                 tabIds
               }
             });
-            groupPickerContext = null;
-            input.value = "";
-            input.placeholder = defaultPlaceholder;
-            if (res?.toast) showToast(res.toast);
-            await refreshData();
           }
         });
       }
@@ -1433,9 +1410,8 @@
             customColor: colorHex,
             iconName: "check",
             enterVerb: "Save",
-            keepsOpen: true,
             run: async () => {
-              const res = await sendRuntimeMessage({
+              await sendRuntimeMessage({
                 type: "EXECUTE_ACTION",
                 payload: {
                   action: "RENAME_RECOLOR_GROUP",
@@ -1444,11 +1420,6 @@
                   color: selectedGroupColor
                 }
               });
-              groupEditContext = null;
-              input.value = "";
-              input.placeholder = defaultPlaceholder;
-              if (res?.toast) showToast(res.toast);
-              await refreshData();
             }
           })
         ];
@@ -1472,9 +1443,8 @@
             iconClass: "qc-icon-action",
             iconName: "window",
             enterVerb: "Move",
-            keepsOpen: true,
             run: async () => {
-              const res = await sendRuntimeMessage({
+              await sendRuntimeMessage({
                 type: "EXECUTE_ACTION",
                 payload: {
                   action: "MOVE_TAB_TO_WINDOW",
@@ -1482,11 +1452,6 @@
                   targetWindowId: w.id
                 }
               });
-              windowPickerContext = null;
-              input.value = "";
-              input.placeholder = defaultPlaceholder;
-              if (res?.toast) showToast(res.toast);
-              await refreshData();
             }
           })
         );
