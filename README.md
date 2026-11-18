@@ -4,6 +4,12 @@ A fast, no-frills Manifest V3 command palette for Google Chrome (`⌘⇧K` / `Ct
 
 ---
 
+## Favourite Use Cases
+
+See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday workflows and screenshots.
+
+---
+
 ## UI & Appearance
 
 ### Dark Indigo Glass

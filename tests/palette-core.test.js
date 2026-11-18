@@ -639,3 +639,37 @@ test("buildResults surfaces act-group-base-domain, act-close-base-domain, and ac
     keepsOpen: true
   });
 });
+
+test("buildResults surfaces act-consolidate-groups when groups exist and counts only unpinned, ungrouped tabs", () => {
+  const data = {
+    activeTab: { id: 1, title: "Grouped Tab", url: "https://example.com/1", groupId: 10 },
+    tabs: [
+      { id: 1, title: "Grouped Tab", url: "https://example.com/1", groupId: 10, pinned: false, currentWindow: true, active: true },
+      { id: 2, title: "Pinned Tab", url: "https://example.com/2", groupId: -1, pinned: true, currentWindow: true, active: false },
+      { id: 3, title: "Ungrouped Tab A", url: "https://example.com/3", groupId: -1, pinned: false, currentWindow: true, active: false },
+      { id: 4, title: "Ungrouped Tab B", url: "https://example.com/4", groupId: -1, pinned: false, currentWindow: false, active: false }
+    ],
+    tabGroups: [
+      { id: 10, title: "Work", color: "blue", currentWindow: true, count: 1 }
+    ],
+    windows: [
+      { id: 100, current: true, tabCount: 3 }
+    ]
+  };
+
+  const res = Core.buildResults(data, ">", "all");
+  const act = res.items.find((i) => i.id === "act-consolidate-groups");
+  assert.ok(act, "act-consolidate-groups should be present");
+  assert.equal(act.title, "Consolidate Groups Here & Separate Ungrouped Tabs");
+  assert.equal(act.subtitle, "Keep 1 group(s) in this window and move 2 unpinned, ungrouped tab(s) to another window");
+  assert.equal(act.badge, "Window");
+  assert.deepEqual(act.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "CONSOLIDATE_GROUPS_AND_SEPARATE_TABS" },
+    keepsOpen: true
+  });
+
+  // Should not appear when there are no tab groups
+  const noGroupsRes = Core.buildResults({ ...data, tabGroups: [] }, ">", "all");
+  assert.equal(noGroupsRes.items.find((i) => i.id === "act-consolidate-groups"), undefined);
+});

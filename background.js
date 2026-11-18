@@ -884,6 +884,85 @@ async function executeAction(payload) {
       }
       return { ok: true, toast: `Merged ${movedCount} tab(s) into current window` };
     }
+    case "CONSOLIDATE_GROUPS_AND_SEPARATE_TABS": {
+      if (!chrome.tabGroups) return { ok: false, error: "Tab groups API unavailable" };
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!active) return { ok: false, error: "No active tab" };
+      const currentWinId = active.windowId;
+      const isIncognito = Boolean(active.incognito);
+
+      const initialWindows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+      const sameTypeWinIds = new Set(
+        initialWindows.filter((w) => Boolean(w.incognito) === isIncognito).map((w) => w.id)
+      );
+      const allGroups = await chrome.tabGroups.query({}).catch(() => []);
+      const sameTypeGroups = allGroups.filter((g) => sameTypeWinIds.has(g.windowId));
+      if (sameTypeGroups.length === 0) {
+        return { ok: false, error: "No tab groups to consolidate" };
+      }
+
+      // 1. Move all groups from other matching windows into the current window first
+      // so the current window stays open even if its ungrouped tabs are moved out next.
+      let movedGroupsCount = 0;
+      for (const grp of sameTypeGroups) {
+        if (grp.windowId !== currentWinId) {
+          await chrome.tabGroups.move(grp.id, { windowId: currentWinId, index: -1 });
+          movedGroupsCount += 1;
+        }
+      }
+
+      // 2. Re-query windows and move all unpinned, ungrouped tabs into another window.
+      const updatedWindows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+      const remainingSameType = updatedWindows.filter((w) => Boolean(w.incognito) === isIncognito);
+      const otherWindows = remainingSameType.filter((w) => w.id !== currentWinId);
+      const ungroupedTabs = [];
+      for (const win of remainingSameType) {
+        for (const t of win.tabs || []) {
+          if (!t.pinned && (t.groupId == null || t.groupId === -1)) {
+            ungroupedTabs.push(t);
+          }
+        }
+      }
+
+      if (ungroupedTabs.length === 0) {
+        return {
+          ok: true,
+          toast: movedGroupsCount > 0
+            ? `Consolidated ${movedGroupsCount} group(s) into this window`
+            : "All groups are already in this window"
+        };
+      }
+
+      let movedTabsCount = 0;
+      if (otherWindows.length > 0) {
+        const targetOtherWinId = otherWindows[0].id;
+        const tabIdsToMove = ungroupedTabs
+          .filter((t) => t.windowId !== targetOtherWinId)
+          .map((t) => t.id)
+          .filter(Boolean);
+        if (tabIdsToMove.length > 0) {
+          await chrome.tabs.move(tabIdsToMove, { windowId: targetOtherWinId, index: -1 });
+          movedTabsCount = tabIdsToMove.length;
+        }
+      } else {
+        const [firstTab, ...restTabs] = ungroupedTabs;
+        const newWin = await chrome.windows.create({
+          tabId: firstTab.id,
+          incognito: isIncognito,
+          focused: false
+        });
+        const restIds = restTabs.map((t) => t.id).filter(Boolean);
+        if (restIds.length > 0 && newWin?.id) {
+          await chrome.tabs.move(restIds, { windowId: newWin.id, index: -1 });
+        }
+        movedTabsCount = ungroupedTabs.length;
+      }
+
+      const toast = movedTabsCount > 0
+        ? `Consolidated ${sameTypeGroups.length} group(s) here; moved ${movedTabsCount} ungrouped tab(s) to another window`
+        : `Consolidated ${sameTypeGroups.length} group(s) here; ungrouped tabs already in another window`;
+      return { ok: true, toast };
+    }
     case "TOGGLE_BOOKMARK": {
       const { url, title } = payload;
       if (!chrome.bookmarks) return { ok: false, error: "Bookmarks API unavailable" };

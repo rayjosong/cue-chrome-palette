@@ -908,6 +908,33 @@
           }
         );
       }
+
+      const tabGroupsList = Array.isArray(contextData) ? [] : (contextData?.tabGroups || []);
+      const ungroupedUnpinnedCount = allTabs.filter(
+        (t) => !t.pinned && (t.groupId == null || t.groupId < 0)
+      ).length;
+      if (tabGroupsList.length > 0 && (windows.length > 1 || ungroupedUnpinnedCount > 0)) {
+        actions.push({
+          id: "act-consolidate-groups",
+          kind: "action",
+          section: "Actions",
+          title: "Consolidate Groups Here & Separate Ungrouped Tabs",
+          subtitle: `Keep ${tabGroupsList.length} group(s) in this window and move ${ungroupedUnpinnedCount} unpinned, ungrouped tab(s) to another window`,
+          badge: "Window",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "layers",
+          enterVerb: "Organize",
+          priority: 9.15,
+          keepsOpen: true,
+          searchText: "consolidate groups here separate unpinned ungrouped tabs another window organize",
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: { action: "CONSOLIDATE_GROUPS_AND_SEPARATE_TABS" },
+            keepsOpen: true
+          }
+        });
+      }
     }
 
     if (analysis.activeDomain && analysis.domainCount > 1) {
