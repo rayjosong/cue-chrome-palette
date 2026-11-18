@@ -1,3 +1,8 @@
+if (typeof importScripts === "function" && typeof globalThis.__CueCore === "undefined") {
+  importScripts("palette-core.js");
+}
+const { normalizeUrlForDedup, extractBaseDomain } = globalThis.__CueCore;
+
 const DEFAULT_QUICK_LINKS = [
   { bang: "gh", title: "GitHub", url: "https://github.com", searchUrl: "https://github.com/search?q={query}" },
   { bang: "yt", title: "YouTube", url: "https://www.youtube.com", searchUrl: "https://www.youtube.com/results?search_query={query}" },
@@ -107,7 +112,7 @@ chrome.commands.onCommand.addListener(async (command) => {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: activeTab.id },
-        files: ["palette-core.js", "palette-ui.js", "content.js"]
+        files: ["palette-core.js", "palette-icons.js", "palette-ui.js", "content.js"]
       });
       const res = await chrome.tabs.sendMessage(activeTab.id, { type: "TOGGLE_PALETTE" });
       if (!res || !res.ok) throw new Error("Fallback to popup");
@@ -206,15 +211,19 @@ async function recordUsage(itemId) {
   }
 }
 
-async function getInstalledThemes() {
-  if (!chrome.management) return [];
+async function getManagementData() {
+  if (!chrome.management) {
+    return { themesPermission: false, themes: [], extensions: [] };
+  }
   try {
-    // Theme switching is opt-in: `management` is an optional permission, so
-    // never touch chrome.management until the user has granted it.
-    const granted = await chrome.permissions.contains({ permissions: ["management"] });
-    if (!granted) return [];
+    // Theme switching & extension management are opt-in: `management` is an
+    // optional permission, so never touch chrome.management until granted.
+    const granted = await chrome.permissions.contains({ permissions: ["management"] }).catch(() => false);
+    if (!granted) {
+      return { themesPermission: false, themes: [], extensions: [] };
+    }
     const all = await chrome.management.getAll().catch(() => []);
-    return all
+    const themes = all
       .filter((ext) => ext.type === "theme")
       .map((ext) => ({
         id: ext.id,
@@ -224,8 +233,20 @@ async function getInstalledThemes() {
         version: ext.version || ""
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
+    const extensions = all
+      .filter((ext) => ext.type === "extension" && ext.id !== chrome.runtime.id)
+      .map((ext) => ({
+        id: ext.id,
+        name: ext.name,
+        description: ext.description || "",
+        enabled: Boolean(ext.enabled),
+        optionsUrl: ext.optionsUrl || "",
+        version: ext.version || ""
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { themesPermission: true, themes, extensions };
   } catch {
-    return [];
+    return { themesPermission: false, themes: [], extensions: [] };
   }
 }
 
@@ -244,42 +265,6 @@ async function searchHistory(query = "") {
         url: h.url,
         visitCount: h.visitCount || 0
       }));
-  } catch {
-    return [];
-  }
-}
-
-function normalizeUrlForDedup(rawUrl = "") {
-  try {
-    const u = new URL(rawUrl);
-    u.hash = "";
-    let s = u.toString();
-    if (s.endsWith("/")) {
-      s = s.slice(0, -1);
-    }
-    return s;
-  } catch {
-    return rawUrl.replace(/#.*$/, "").replace(/\/+$/, "");
-  }
-}
-
-async function getInstalledExtensions() {
-  if (!chrome.management) return [];
-  try {
-    const granted = await chrome.permissions.contains({ permissions: ["management"] });
-    if (!granted) return [];
-    const all = await chrome.management.getAll().catch(() => []);
-    return all
-      .filter((ext) => ext.type === "extension" && ext.id !== chrome.runtime.id)
-      .map((ext) => ({
-        id: ext.id,
-        name: ext.name,
-        description: ext.description || "",
-        enabled: Boolean(ext.enabled),
-        optionsUrl: ext.optionsUrl || "",
-        version: ext.version || ""
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
   } catch {
     return [];
   }
@@ -308,84 +293,10 @@ async function getRecentDownloads() {
   }
 }
 
-const TWO_PART_PUBLIC_SUFFIXES = new Set([
-  "co.uk", "org.uk", "gov.uk", "ac.uk",
-  "com.au", "net.au", "org.au",
-  "co.nz",
-  "co.jp", "ne.jp", "or.jp",
-  "com.sg", "edu.sg", "gov.sg",
-  "com.br", "com.mx",
-  "co.in", "co.kr", "com.hk", "com.tw"
-]);
-
-function extractBaseDomain(rawUrl = "") {
-  if (!rawUrl || typeof rawUrl !== "string") return "";
-  const trimmed = rawUrl.trim();
-  if (
-    trimmed.startsWith("chrome://") ||
-    trimmed.startsWith("chrome-extension://") ||
-    trimmed.startsWith("edge://") ||
-    trimmed.startsWith("about:") ||
-    trimmed.startsWith("view-source:") ||
-    trimmed.startsWith("devtools://") ||
-    trimmed.startsWith("chrome-search://") ||
-    trimmed.startsWith("data:")
-  ) {
-    return "";
-  }
-
-  let host = "";
-  if (/^https?:\/\//i.test(trimmed)) {
-    try {
-      const u = new URL(trimmed);
-      if (u.protocol !== "http:" && u.protocol !== "https:") return "";
-      host = u.hostname.toLowerCase();
-    } catch {
-      return "";
-    }
-  } else if (trimmed.includes("://")) {
-    return "";
-  } else {
-    try {
-      const u = new URL(`http://${trimmed}`);
-      host = u.hostname.toLowerCase();
-    } catch {
-      host = trimmed.toLowerCase();
-    }
-  }
-
-  if (!host) return "";
-
-  if (host.startsWith("www.")) {
-    host = host.slice(4);
-  }
-
-  const isIpv4 = /^\d+\.\d+\.\d+\.\d+$/.test(host);
-  const isIpv6 = host.includes(":") || (host.startsWith("[") && host.endsWith("]"));
-  if (host === "localhost" || isIpv4 || isIpv6) {
-    return host;
-  }
-
-  const parts = host.split(".");
-  if (parts.length <= 1) {
-    return host;
-  }
-
-  const lastTwo = parts.slice(-2).join(".");
-  if (TWO_PART_PUBLIC_SUFFIXES.has(lastTwo)) {
-    if (parts.length >= 3) {
-      return parts.slice(-3).join(".");
-    }
-    return host;
-  }
-
-  return parts.slice(-2).join(".");
-}
-
 async function getPaletteData(query = "") {
   await ensureMruLoaded();
 
-  const [tabs, activeTabs, quickLinks, bookmarks, historyItems, tabGroups, recentSessions, frecency, themes, themesPermission, extensions, downloads, normalWindows] = await Promise.all([
+  const [tabs, activeTabs, quickLinks, bookmarks, historyItems, tabGroups, recentSessions, frecency, mgmtData, downloads, normalWindows] = await Promise.all([
     chrome.tabs.query({}),
     chrome.tabs.query({ active: true, currentWindow: true }),
     getQuickLinks(),
@@ -394,23 +305,35 @@ async function getPaletteData(query = "") {
     chrome.tabGroups ? chrome.tabGroups.query({}).catch(() => []) : Promise.resolve([]),
     chrome.sessions ? chrome.sessions.getRecentlyClosed({ maxResults: 15 }).catch(() => []) : Promise.resolve([]),
     getFrecency(),
-    getInstalledThemes(),
-    chrome.permissions.contains({ permissions: ["management"] }).catch(() => false),
-    getInstalledExtensions(),
+    getManagementData(),
     getRecentDownloads(),
-    chrome.windows ? chrome.windows.getAll({ populate: true, windowTypes: ["normal"] }).catch(() => []) : Promise.resolve([])
+    chrome.windows ? chrome.windows.getAll({ populate: false, windowTypes: ["normal"] }).catch(() => []) : Promise.resolve([])
   ]);
 
+  const { themesPermission, themes, extensions } = mgmtData;
   const activeTab = activeTabs[0] || null;
 
+  const tabsByWindow = new Map();
+  for (const t of tabs) {
+    let info = tabsByWindow.get(t.windowId);
+    if (!info) {
+      info = { count: 0, activeTitle: "" };
+      tabsByWindow.set(t.windowId, info);
+    }
+    info.count += 1;
+    if (t.active && !info.activeTitle) {
+      info.activeTitle = t.title || "";
+    }
+  }
+
   const windows = (normalWindows || []).map((w) => {
-    const activeInWin = (w.tabs || []).find((t) => t.active);
+    const info = tabsByWindow.get(w.id);
     return {
       id: w.id,
       focused: Boolean(w.focused),
       incognito: Boolean(w.incognito),
-      tabCount: (w.tabs || []).length,
-      title: activeInWin?.title || "Window"
+      tabCount: info ? info.count : 0,
+      title: info?.activeTitle || "Window"
     };
   });
 

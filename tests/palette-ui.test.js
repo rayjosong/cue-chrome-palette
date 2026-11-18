@@ -1,0 +1,435 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+function createDomShim() {
+  class FakeClassList {
+    constructor(el) {
+      this._el = el;
+      this._set = new Set();
+    }
+    _syncFromAttr(val) {
+      this._set = new Set(String(val || "").split(/\s+/).filter(Boolean));
+    }
+    add(...tokens) {
+      for (const t of tokens) if (t) this._set.add(t);
+    }
+    remove(...tokens) {
+      for (const t of tokens) this._set.delete(t);
+    }
+    toggle(token, force) {
+      if (force === true) {
+        this._set.add(token);
+        return true;
+      }
+      if (force === false) {
+        this._set.delete(token);
+        return false;
+      }
+      if (this._set.has(token)) {
+        this._set.delete(token);
+        return false;
+      }
+      this._set.add(token);
+      return true;
+    }
+    contains(token) {
+      return this._set.has(token);
+    }
+    toString() {
+      return Array.from(this._set).join(" ");
+    }
+  }
+
+  class FakeTextNode {
+    constructor(text) {
+      this.nodeType = 3;
+      this.textContent = String(text ?? "");
+      this.parentNode = null;
+    }
+    remove() {
+      if (this.parentNode) {
+        const idx = this.parentNode.children.indexOf(this);
+        if (idx !== -1) this.parentNode.children.splice(idx, 1);
+        this.parentNode = null;
+      }
+    }
+  }
+
+  class FakeElement {
+    constructor(tagName) {
+      this.nodeType = 1;
+      this.tagName = String(tagName).toUpperCase();
+      this.children = [];
+      this.parentNode = null;
+      this.attributes = {};
+      this.dataset = {};
+      this.style = {
+        setProperty: (k, v) => {
+          this.style[k] = v;
+        },
+        removeProperty: (k) => {
+          delete this.style[k];
+        }
+      };
+      this.classList = new FakeClassList(this);
+      this.listeners = new Map();
+      this.value = "";
+      this.type = "";
+      this.placeholder = "";
+      this.title = "";
+      this.hidden = false;
+      this.disabled = false;
+      this.isConnected = true;
+      this._textContent = "";
+    }
+
+    get id() {
+      return this.attributes.id || "";
+    }
+    set id(v) {
+      this.attributes.id = String(v);
+    }
+    get className() {
+      return this.classList.toString();
+    }
+    set className(v) {
+      this.classList._syncFromAttr(v);
+    }
+    get textContent() {
+      if (this.children.length === 0) return this._textContent;
+      return this.children.map((c) => c.textContent).join("");
+    }
+    set textContent(v) {
+      this.children = [];
+      this._textContent = String(v ?? "");
+    }
+
+    setAttribute(k, v) {
+      this.attributes[k] = String(v);
+      if (k === "class") this.classList._syncFromAttr(v);
+    }
+    getAttribute(k) {
+      return k in this.attributes ? this.attributes[k] : null;
+    }
+    removeAttribute(k) {
+      delete this.attributes[k];
+    }
+
+    appendChild(child) {
+      if (child.parentNode) child.remove();
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    }
+    append(...nodes) {
+      for (const n of nodes) {
+        if (typeof n === "string") {
+          this.appendChild(new FakeTextNode(n));
+        } else if (n) {
+          this.appendChild(n);
+        }
+      }
+    }
+    remove() {
+      if (this.parentNode) {
+        const idx = this.parentNode.children.indexOf(this);
+        if (idx !== -1) this.parentNode.children.splice(idx, 1);
+        this.parentNode = null;
+      }
+    }
+
+    addEventListener(type, fn) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type).push(fn);
+    }
+    removeEventListener(type, fn) {
+      const list = this.listeners.get(type);
+      if (!list) return;
+      const idx = list.indexOf(fn);
+      if (idx !== -1) list.splice(idx, 1);
+    }
+    dispatchEvent(evt) {
+      evt.target = evt.target || this;
+      evt.currentTarget = this;
+      evt.preventDefault = evt.preventDefault || (() => {});
+      evt.stopPropagation = evt.stopPropagation || (() => {});
+      const list = this.listeners.get(evt.type) || [];
+      for (const fn of [...list]) {
+        fn.call(this, evt);
+      }
+      return true;
+    }
+
+    click() {
+      this.dispatchEvent({ type: "click" });
+    }
+    focus() {
+      this._document && (this._document.activeElement = this);
+    }
+    select() {}
+    scrollIntoView() {}
+
+    _matchesSelector(sel) {
+      if (sel.startsWith(".")) {
+        return this.classList.contains(sel.slice(1));
+      }
+      if (sel.startsWith("#")) {
+        return this.id === sel.slice(1);
+      }
+      return this.tagName.toLowerCase() === sel.toLowerCase();
+    }
+    querySelectorAll(sel) {
+      const out = [];
+      const walk = (node) => {
+        for (const child of node.children || []) {
+          if (child.nodeType === 1) {
+            if (child._matchesSelector(sel)) out.push(child);
+            walk(child);
+          }
+        }
+      };
+      walk(this);
+      return out;
+    }
+    querySelector(sel) {
+      return this.querySelectorAll(sel)[0] || null;
+    }
+  }
+
+  const document = {
+    activeElement: null,
+    documentElement: new FakeElement("html"),
+    body: new FakeElement("body"),
+    createElement(tag) {
+      const el = new FakeElement(tag);
+      el._document = document;
+      return el;
+    },
+    createElementNS(_ns, tag) {
+      const el = new FakeElement(tag);
+      el._document = document;
+      return el;
+    },
+    createTextNode(text) {
+      return new FakeTextNode(text);
+    },
+    execCommand() {
+      return true;
+    }
+  };
+
+  return { document, FakeElement };
+}
+
+function mountPalette(overrides = {}) {
+  const { document } = createDomShim();
+  const sentMessages = [];
+  let closedCount = 0;
+
+  const sampleData = overrides.data || {
+    activeTab: { id: 1, windowId: 100, groupId: -1, title: "Active Tab", url: "https://github.com/org/repo", pinned: false, audible: false, muted: false },
+    tabs: [
+      { id: 2, windowId: 100, groupId: -1, title: "MDN Web Docs", url: "https://developer.mozilla.org/en-US/", active: false, currentWindow: true, pinned: false, lastAccessed: 2000 },
+      { id: 1, windowId: 100, groupId: -1, title: "Active Tab", url: "https://github.com/org/repo", active: true, currentWindow: true, pinned: false, lastAccessed: 1000 }
+    ],
+    tabGroups: [],
+    closedTabs: [],
+    quickLinks: [{ bang: "gh", title: "GitHub", url: "https://github.com", searchUrl: "https://github.com/search?q={query}" }],
+    chromePages: [{ id: "chrome-settings", title: "Chrome Settings", subtitle: "chrome://settings", url: "chrome://settings" }],
+    bookmarks: [],
+    history: [],
+    frecency: {},
+    themes: [],
+    themesPermission: false,
+    extensions: [],
+    downloads: [],
+    windows: [{ id: 100, focused: true, incognito: false, tabCount: 2, title: "Active Tab" }]
+  };
+
+  const windowObj = {
+    screen: { availLeft: 0, availTop: 0, availWidth: 1440, availHeight: 900 },
+    innerWidth: 1440,
+    innerHeight: 900
+  };
+  const navigatorObj = { platform: "MacIntel", clipboard: { writeText: async () => {} } };
+
+  const chromeObj = {
+    runtime: {
+      sendMessage: (msg, cb) => {
+        sentMessages.push(msg);
+        if (msg.type === "GET_PALETTE_DATA") {
+          cb({ ok: true, data: sampleData });
+          return;
+        }
+        if (msg.type === "EXECUTE_ACTION") {
+          cb(overrides.onExecuteAction ? overrides.onExecuteAction(msg.payload) : { ok: true, toast: "Done" });
+          return;
+        }
+        if (msg.type === "SEARCH_HISTORY") {
+          cb({ ok: true, history: [] });
+          return;
+        }
+        cb({ ok: true });
+      }
+    }
+  };
+
+  const context = vm.createContext({
+    window: windowObj,
+    document,
+    navigator: navigatorObj,
+    chrome: chromeObj,
+    URL,
+    Date,
+    Map,
+    Set,
+    Promise,
+    Math,
+    Number,
+    Object,
+    Array,
+    Error,
+    isNaN,
+    setTimeout,
+    clearTimeout,
+    requestAnimationFrame: (fn) => fn(),
+    console
+  });
+
+  const coreCode = fs.readFileSync(path.join(__dirname, "..", "palette-core.js"), "utf8");
+  const iconsCode = fs.readFileSync(path.join(__dirname, "..", "palette-icons.js"), "utf8");
+  const uiCode = fs.readFileSync(path.join(__dirname, "..", "palette-ui.js"), "utf8");
+  vm.runInContext(coreCode, context, { filename: "palette-core.js" });
+  vm.runInContext(iconsCode, context, { filename: "palette-icons.js" });
+  vm.runInContext(uiCode, context, { filename: "palette-ui.js" });
+
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+
+  const instance = windowObj.__CueCreatePalette({
+    container,
+    isPopup: overrides.isPopup ?? true,
+    onClose: () => {
+      closedCount += 1;
+    }
+  });
+
+  return {
+    container,
+    instance,
+    sentMessages,
+    getClosedCount: () => closedCount,
+    getModal: () => container.querySelector(".qc-modal"),
+    getInput: () => container.querySelector(".qc-input"),
+    getRows: () => container.querySelectorAll(".qc-item"),
+    getSelectedRow: () => container.querySelectorAll(".qc-item").find((r) => r.classList.contains("qc-selected"))
+  };
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 15));
+
+test("palette-ui mounts, loads data, and renders initial results", async () => {
+  const ui = mountPalette();
+  await flush();
+
+  const rows = ui.getRows();
+  assert.ok(rows.length > 0, "should render initial rows");
+  assert.equal(ui.sentMessages[0].type, "GET_PALETTE_DATA");
+  assert.equal(rows[0].getAttribute("aria-selected"), "true");
+});
+
+test("palette-ui filters results on input and clears on clear button click", async () => {
+  const ui = mountPalette();
+  await flush();
+
+  const input = ui.getInput();
+  input.value = "MDN";
+  input.dispatchEvent({ type: "input" });
+
+  const rows = ui.getRows();
+  assert.ok(rows.length >= 1);
+  assert.match(rows[0].textContent, /MDN Web Docs/);
+
+  const clearBtn = ui.container.querySelector(".qc-clear-btn");
+  clearBtn.click();
+  assert.equal(input.value, "");
+});
+
+test("palette-ui navigates with ArrowDown/ArrowUp and executes selected item on Enter", async () => {
+  const ui = mountPalette();
+  await flush();
+
+  const modal = ui.getModal();
+  const initialSelected = ui.getSelectedRow();
+  modal.dispatchEvent({ type: "keydown", key: "ArrowDown" });
+  const nextSelected = ui.getSelectedRow();
+  assert.notEqual(nextSelected, initialSelected);
+
+  modal.dispatchEvent({ type: "keydown", key: "ArrowUp" });
+  assert.equal(ui.getSelectedRow(), initialSelected);
+
+  modal.dispatchEvent({ type: "keydown", key: "Enter" });
+  await flush();
+
+  const execMsg = ui.sentMessages.find((m) => m.type === "EXECUTE_ACTION");
+  assert.ok(execMsg, "Enter should execute the selected item");
+  assert.equal(ui.getClosedCount(), 1, "executing a tab switch should close the palette");
+});
+
+test("palette-ui cycles filter chips on Tab", async () => {
+  const ui = mountPalette();
+  await flush();
+
+  const modal = ui.getModal();
+  const chips = ui.container.querySelectorAll(".qc-chip");
+  assert.equal(chips[0].classList.contains("qc-chip-active"), true); // All
+
+  modal.dispatchEvent({ type: "keydown", key: "Tab" });
+  assert.equal(chips[1].classList.contains("qc-chip-active"), true); // Tabs
+
+  modal.dispatchEvent({ type: "keydown", key: "Tab" });
+  assert.equal(chips[2].classList.contains("qc-chip-active"), true); // Groups
+});
+
+test("palette-ui toggles actions popover with Cmd+K and closes popover on Escape without closing palette", async () => {
+  const ui = mountPalette();
+  await flush();
+
+  const modal = ui.getModal();
+  const popover = ui.container.querySelector(".qc-actions-popover");
+  assert.equal(popover.style.display, "none");
+
+  modal.dispatchEvent({ type: "keydown", key: "k", metaKey: true });
+  assert.notEqual(popover.style.display, "none");
+
+  modal.dispatchEvent({ type: "keydown", key: "Escape" });
+  assert.equal(popover.style.display, "none");
+  assert.equal(ui.getClosedCount(), 0, "Esc should close popover first, not palette");
+
+  modal.dispatchEvent({ type: "keydown", key: "Escape" });
+  assert.equal(ui.getClosedCount(), 1, "second Esc should close palette");
+});
+
+test("palette-ui ignores Enter while IME is composing", async () => {
+  const ui = mountPalette();
+  await flush();
+
+  const modal = ui.getModal();
+  modal.dispatchEvent({ type: "keydown", key: "Enter", isComposing: true });
+  modal.dispatchEvent({ type: "keydown", key: "Enter", keyCode: 229 });
+  await flush();
+
+  assert.equal(ui.sentMessages.filter((m) => m.type === "EXECUTE_ACTION").length, 0);
+  assert.equal(ui.getClosedCount(), 0);
+});
+
+test("palette-ui destroy triggers onClose", async () => {
+  const ui = mountPalette();
+  await flush();
+  assert.equal(ui.getClosedCount(), 0);
+  ui.instance.destroy();
+  assert.equal(ui.getClosedCount(), 1);
+});

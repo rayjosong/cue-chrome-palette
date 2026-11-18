@@ -1769,6 +1769,9 @@
     computeSplitLayouts
   };
 
+  if (typeof globalThis !== "undefined") {
+    globalThis.__CueCore = Core;
+  }
   if (typeof window !== "undefined") {
     window.__CueCore = Core;
   }

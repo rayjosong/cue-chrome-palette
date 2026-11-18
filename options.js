@@ -76,16 +76,23 @@ resetBtn.addEventListener("click", async () => {
   render();
 });
 
+function normalizeQuickUrl(raw = "") {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (/^(javascript|data|vbscript|file):/i.test(trimmed)) return "";
+  if (!/^(https?:\/\/|chrome:\/\/)/i.test(trimmed)) {
+    return /^localhost\b/i.test(trimmed) ? `http://${trimmed}` : `https://${trimmed}`;
+  }
+  return trimmed;
+}
+
 saveBtn.addEventListener("click", async () => {
   const normalized = links
     .map((l) => {
       const bang = (l.bang || "").trim();
       const title = (l.title || "").trim();
-      let url = (l.url || "").trim();
-      if (url && !/^(https?:\/\/|chrome:\/\/)/i.test(url)) {
-        url = /^localhost\b/i.test(url) ? `http://${url}` : `https://${url}`;
-      }
-      const searchUrl = (l.searchUrl || "").trim();
+      const url = normalizeQuickUrl(l.url || "");
+      const searchUrl = normalizeQuickUrl(l.searchUrl || "");
       return { bang, title, url, searchUrl };
     })
     .filter((l) => l.title && l.url);

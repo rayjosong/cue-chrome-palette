@@ -106,6 +106,50 @@
         font-size: 15px;
         font-weight: 600;
       }
+      @media (prefers-color-scheme: light) {
+        :root {
+          color-scheme: light;
+        }
+        body {
+          background: #f5f6fa;
+          color: #111827;
+        }
+        .wrap {
+          background: #ffffff;
+          border-color: rgba(15, 23, 42, 0.12);
+          box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+        }
+        p.sub,
+        .hdr {
+          color: rgba(15, 23, 42, 0.6);
+        }
+        input {
+          background: rgba(15, 23, 42, 0.04);
+          border-color: rgba(15, 23, 42, 0.14);
+          color: #111827;
+        }
+        button {
+          border-color: rgba(15, 23, 42, 0.14);
+          background: rgba(15, 23, 42, 0.05);
+          color: #111827;
+        }
+        button:hover {
+          background: rgba(15, 23, 42, 0.1);
+        }
+        button.primary {
+          color: #ffffff;
+        }
+        button.danger {
+          color: #dc2626;
+        }
+        .actions,
+        .theme-section {
+          border-top-color: rgba(15, 23, 42, 0.09);
+        }
+        .status {
+          color: #15803d;
+        }
+      }
     </style>
   </head>
   <body>
