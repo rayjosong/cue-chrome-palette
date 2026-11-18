@@ -25,9 +25,13 @@ async function ensureMruLoaded() {
   if (mruLoaded) return;
   mruLoaded = true;
   try {
-    const stored = await chrome.storage.session.get("quickcmdMru");
-    if (stored && stored.quickcmdMru && typeof stored.quickcmdMru === "object") {
-      for (const [k, v] of Object.entries(stored.quickcmdMru)) {
+    // Renamed from QuickCmd: fall back to the old key once so existing
+    // MRU data survives the rename, then drop the old key.
+    const stored = await chrome.storage.session.get(["cueMru", "quickcmdMru"]);
+    const data = stored.cueMru || stored.quickcmdMru;
+    if (data && typeof data === "object") {
+      if (!stored.cueMru && stored.quickcmdMru) chrome.storage.session.remove("quickcmdMru").catch(() => {});
+      for (const [k, v] of Object.entries(data)) {
         const numId = Number(k);
         const numVal = Number(v);
         if (!isNaN(numId) && !isNaN(numVal)) {
@@ -43,7 +47,7 @@ async function ensureMruLoaded() {
 function persistMru() {
   try {
     const obj = Object.fromEntries(mruTimestamps);
-    chrome.storage.session.set({ quickcmdMru: obj }).catch(() => {});
+    chrome.storage.session.set({ cueMru: obj }).catch(() => {});
   } catch {
     // Ignore storage errors
   }
@@ -162,8 +166,15 @@ async function getBookmarks() {
 
 async function getFrecency() {
   try {
-    const stored = await chrome.storage.local.get("quickcmdFrecency");
-    return stored && stored.quickcmdFrecency && typeof stored.quickcmdFrecency === "object" ? stored.quickcmdFrecency : {};
+    // Renamed from QuickCmd: fall back to the old key once so existing
+    // frecency data survives the rename.
+    const stored = await chrome.storage.local.get(["cueFrecency", "quickcmdFrecency"]);
+    const data = stored.cueFrecency || stored.quickcmdFrecency;
+    if (data && typeof data === "object") {
+      if (!stored.cueFrecency && stored.quickcmdFrecency) chrome.storage.local.remove("quickcmdFrecency").catch(() => {});
+      return data;
+    }
+    return {};
   } catch {
     return {};
   }
@@ -185,10 +196,10 @@ async function recordUsage(itemId) {
       for (let i = 0; i < 250 && i < sorted.length; i++) {
         pruned[sorted[i]] = frecency[sorted[i]];
       }
-      await chrome.storage.local.set({ quickcmdFrecency: pruned });
+      await chrome.storage.local.set({ cueFrecency: pruned });
       return { ok: true, frecency: pruned };
     }
-    await chrome.storage.local.set({ quickcmdFrecency: frecency });
+    await chrome.storage.local.set({ cueFrecency: frecency });
     return { ok: true, frecency };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -675,7 +686,7 @@ async function executeAction(payload) {
       // (or was revoked) instead of throwing inside chrome.management.
       const themesGranted = await chrome.permissions.contains({ permissions: ["management"] }).catch(() => false);
       if (!themesGranted) {
-        return { ok: false, error: "Theme switching is off — enable it in QuickCmd options." };
+        return { ok: false, error: "Theme switching is off — enable it in Cue options." };
       }
       if (themeId) {
         try {
@@ -767,7 +778,7 @@ async function executeAction(payload) {
     case "TOGGLE_EXTENSION": {
       const mgmtGranted = await chrome.permissions.contains({ permissions: ["management"] }).catch(() => false);
       if (!mgmtGranted || !chrome.management) {
-        return { ok: false, error: "Extension management is off — enable it in QuickCmd options." };
+        return { ok: false, error: "Extension management is off — enable it in Cue options." };
       }
       const ext = await chrome.management.get(payload.extensionId);
       const nextState = !ext.enabled;
@@ -781,7 +792,7 @@ async function executeAction(payload) {
     case "OPEN_EXTENSION_OPTIONS": {
       const mgmtGranted = await chrome.permissions.contains({ permissions: ["management"] }).catch(() => false);
       if (!mgmtGranted || !chrome.management) {
-        return { ok: false, error: "Extension management is off — enable it in QuickCmd options." };
+        return { ok: false, error: "Extension management is off — enable it in Cue options." };
       }
       const ext = await chrome.management.get(payload.extensionId);
       if (ext.optionsUrl) {
@@ -839,3 +850,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false;
   }
 });
+

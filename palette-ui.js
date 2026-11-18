@@ -1,7 +1,7 @@
 (() => {
-  if (window.__QuickCmdCreatePalette) return;
+  if (window.__CueCreatePalette) return;
 
-  const Core = window.__QuickCmdCore;
+  const Core = window.__CueCore;
   if (!Core) return;
 
   const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
@@ -181,7 +181,7 @@
     }
   }
 
-  window.__QuickCmdCreatePalette = function createPalette({ container, isPopup = false, onClose }) {
+  window.__CueCreatePalette = function createPalette({ container, isPopup = false, onClose }) {
     const backdrop = document.createElement("div");
     backdrop.className = `qc-backdrop${isPopup ? " qc-is-popup" : ""}`;
 
@@ -196,7 +196,7 @@
     modal.className = "qc-modal";
     modal.setAttribute("role", "dialog");
     modal.setAttribute("aria-modal", "true");
-    modal.setAttribute("aria-label", "QuickCmd command palette");
+    modal.setAttribute("aria-label", "Cue command palette");
     modal.tabIndex = -1;
     backdrop.appendChild(modal);
 
@@ -1723,3 +1723,4 @@
     };
   };
 })();
+

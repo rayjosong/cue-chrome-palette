@@ -1,4 +1,4 @@
-# QuickCmd — Design Options Comparison
+# Cue — Design Options Comparison
 
 All three design directions explored so far, split into clear options so you can choose which direction to lock in.
 
@@ -47,3 +47,4 @@ All three design directions explored so far, split into clear options so you can
 * **Chrome:** No filter chip bar by default (relies on `>`, `@`, `*`, `/h`, `/g`, `/c` prefixes) and a single-line compact footer.
 
 **Best if you want:** Maximum information density and zero visual chrome when juggling 40+ tabs.
+

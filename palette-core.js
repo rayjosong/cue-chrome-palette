@@ -1,5 +1,5 @@
 /**
- * palette-core.js - Pure Search/Ranking Engine & Domain Logic for QuickCmd
+ * palette-core.js - Pure Search/Ranking Engine & Domain Logic for Cue
  * Manifest V3 Zero-Build Vanilla JavaScript
  */
 (() => {
@@ -1073,7 +1073,7 @@
         kind: "theme",
         section: "Chrome Themes",
         title: "Enable Chrome Theme Switching",
-        subtitle: "Optional permission — QuickCmd lists and switches installed Chrome themes only with your consent. Press Enter to open Options.",
+        subtitle: "Optional permission — Cue lists and switches installed Chrome themes only with your consent. Press Enter to open Options.",
         badge: "Optional",
         badgeClass: "qc-badge-theme",
         iconClass: "qc-icon-theme",
@@ -1096,7 +1096,7 @@
               kind: "extension",
               section: "Installed Extensions",
               title: "Enable Extension Management",
-              subtitle: "Optional permission — QuickCmd toggles installed extensions only with your consent. Press Enter to open Options.",
+              subtitle: "Optional permission — Cue toggles installed extensions only with your consent. Press Enter to open Options.",
               badge: "Optional",
               badgeClass: "qc-badge-action",
               iconClass: "qc-icon-ext",
@@ -1308,9 +1308,10 @@
   };
 
   if (typeof window !== "undefined") {
-    window.__QuickCmdCore = Core;
+    window.__CueCore = Core;
   }
   if (typeof module !== "undefined" && module.exports) {
     module.exports = Core;
   }
 })();
+

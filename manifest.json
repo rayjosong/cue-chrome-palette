@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "QuickCmd — Command Palette",
+  "name": "Cue — Command Palette",
   "version": "1.1.0",
-  "description": "Raycast/Arc-style command palette for tabs, bookmarks, history, Chrome pages, and custom bang shortcuts.",
+  "description": "Fast, no-frills command palette for tabs, bookmarks, history, and custom bang shortcuts.",
   "permissions": [
     "tabs",
     "tabGroups",
@@ -48,3 +48,4 @@
     }
   ]
 }
+

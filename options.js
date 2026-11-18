@@ -131,8 +131,8 @@ async function refreshThemeState() {
   themeGranted = await chrome.permissions.contains({ permissions: ["management"] });
   themeBtn.textContent = themeGranted ? "Disable theme & extension management" : "Enable theme & extension management";
   themeStatus.textContent = themeGranted
-    ? "On — QuickCmd can list and toggle your installed Chrome themes and extensions."
-    : "Off — QuickCmd cannot see your installed themes or extensions.";
+    ? "On — Cue can list and toggle your installed Chrome themes and extensions."
+    : "Off — Cue cannot see your installed themes or extensions.";
 }
 
 themeBtn.addEventListener("click", () => {
@@ -146,3 +146,4 @@ themeBtn.addEventListener("click", () => {
 refreshThemeState();
 
 load();
+

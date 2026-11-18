@@ -1,6 +1,6 @@
 (() => {
-  if (window.__QuickCmdContentLoaded && typeof window.__QuickCmdCreatePalette === "function") return;
-  window.__QuickCmdContentLoaded = true;
+  if (window.__CueContentLoaded && typeof window.__CueCreatePalette === "function") return;
+  window.__CueContentLoaded = true;
 
   let hostEl = null;
   let paletteInstance = null;
@@ -41,14 +41,14 @@
       }
     }
 
-    if (typeof window.__QuickCmdCreatePalette !== "function") {
+    if (typeof window.__CueCreatePalette !== "function") {
       return;
     }
 
     previousActiveElement = document.activeElement;
     isClosing = false;
     hostEl = document.createElement("div");
-    hostEl.id = "quickcmd-shadow-host";
+    hostEl.id = "cue-shadow-host";
     const shadow = hostEl.attachShadow({ mode: "open" });
 
     const link = document.createElement("link");
@@ -74,7 +74,7 @@
 
     document.documentElement.appendChild(hostEl);
 
-    paletteInstance = window.__QuickCmdCreatePalette({
+    paletteInstance = window.__CueCreatePalette({
       container: mount,
       isPopup: false,
       onClose: closePalette
@@ -109,3 +109,4 @@
     return false;
   });
 })();
+

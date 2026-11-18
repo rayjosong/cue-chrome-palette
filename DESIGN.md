@@ -1,6 +1,6 @@
-# QuickCmd — Command Palette Design System & Benchmarks
+# Cue — Command Palette Design System & Benchmarks
 
-A compiled reference of modern command palette UX/UI patterns from **Raycast**, **Linear**, **Arc Browser**, **VS Code**, and **`cmdk` (Vercel/shadcn)**, paired with QuickCmd's concrete design tokens and roadmap.
+A compiled reference of modern command palette UX/UI patterns from **Raycast**, **Linear**, **Arc Browser**, **VS Code**, and **`cmdk` (Vercel/shadcn)**, paired with Cue's concrete design tokens and roadmap.
 
 ---
 
@@ -84,9 +84,10 @@ A high-craft command palette separates cleanly into six vertical layers:
 
 ---
 
-## 5. Next Design & UX Roadmap for QuickCmd
+## 5. Next Design & UX Roadmap for Cue
 
 * **Non-contiguous fuzzy highlighting:** Highlight individual matched characters (e.g., `g` + `h` in **G**it**H**ub) when fuzzy-matching rather than only contiguous substrings.
 * **Raycast-style Secondary Action Menu:** Pressing `⌘K` *while the palette is open* reveals item-specific actions (e.g., *Move Tab to Group X*, *Copy as Markdown*, *Close All from Domain*).
 * **Inline Toast Feedback:** Brief, non-blocking pill (`Copied URL`, `Tab Pinned`) when an action runs in place.
 * **Adaptive Light Theme:** Optional `prefers-color-scheme: light` token set for users on light macOS appearances.
+

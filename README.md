@@ -1,4 +1,4 @@
-# QuickCmd — Chrome Command Palette
+# Cue — Chrome Command Palette
 
 A fast, no-frills Manifest V3 command palette for Google Chrome (`⌘⇧K` / `Ctrl+Shift+K`) — no account, no integrations, no data leaves your device. Built for company computers as much as personal ones. Featuring Dark Indigo Glass & Adaptive Light UI, MRU tab switching, interactive tab groups, custom bangs, and optional Chrome theme switching.
 
@@ -67,7 +67,7 @@ A fast, no-frills Manifest V3 command palette for Google Chrome (`⌘⇧K` / `Ct
 
 ## Privacy & Permissions
 
-- **No account, no sign-in, no analytics.** QuickCmd runs entirely on your device — tabs, bookmarks, and history never leave Chrome.
+- **No account, no sign-in, no analytics.** Cue runs entirely on your device — tabs, bookmarks, and history never leave Chrome.
 - **No third-party integrations, by design.** No Notion, Figma, Google Docs, or any other service is connected. Browsing data stays in the browser.
 - **Minimal permissions.** The extension asks only for what the palette needs (tabs, bookmarks, history, storage). Chrome theme switching (`/t`) is opt-in: it needs the `management` permission, which can also enable or disable other extensions, so it is requested only when you enable theme switching in Options — everything else works without it.
 
@@ -85,3 +85,4 @@ A fast, no-frills Manifest V3 command palette for Google Chrome (`⌘⇧K` / `Ct
 ```bash
 node --test tests/palette-core.test.js
 ```
+
