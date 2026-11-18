@@ -308,6 +308,80 @@ async function getRecentDownloads() {
   }
 }
 
+const TWO_PART_PUBLIC_SUFFIXES = new Set([
+  "co.uk", "org.uk", "gov.uk", "ac.uk",
+  "com.au", "net.au", "org.au",
+  "co.nz",
+  "co.jp", "ne.jp", "or.jp",
+  "com.sg", "edu.sg", "gov.sg",
+  "com.br", "com.mx",
+  "co.in", "co.kr", "com.hk", "com.tw"
+]);
+
+function extractBaseDomain(rawUrl = "") {
+  if (!rawUrl || typeof rawUrl !== "string") return "";
+  const trimmed = rawUrl.trim();
+  if (
+    trimmed.startsWith("chrome://") ||
+    trimmed.startsWith("chrome-extension://") ||
+    trimmed.startsWith("edge://") ||
+    trimmed.startsWith("about:") ||
+    trimmed.startsWith("view-source:") ||
+    trimmed.startsWith("devtools://") ||
+    trimmed.startsWith("chrome-search://") ||
+    trimmed.startsWith("data:")
+  ) {
+    return "";
+  }
+
+  let host = "";
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const u = new URL(trimmed);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+      host = u.hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  } else if (trimmed.includes("://")) {
+    return "";
+  } else {
+    try {
+      const u = new URL(`http://${trimmed}`);
+      host = u.hostname.toLowerCase();
+    } catch {
+      host = trimmed.toLowerCase();
+    }
+  }
+
+  if (!host) return "";
+
+  if (host.startsWith("www.")) {
+    host = host.slice(4);
+  }
+
+  const isIpv4 = /^\d+\.\d+\.\d+\.\d+$/.test(host);
+  const isIpv6 = host.includes(":") || (host.startsWith("[") && host.endsWith("]"));
+  if (host === "localhost" || isIpv4 || isIpv6) {
+    return host;
+  }
+
+  const parts = host.split(".");
+  if (parts.length <= 1) {
+    return host;
+  }
+
+  const lastTwo = parts.slice(-2).join(".");
+  if (TWO_PART_PUBLIC_SUFFIXES.has(lastTwo)) {
+    if (parts.length >= 3) {
+      return parts.slice(-3).join(".");
+    }
+    return host;
+  }
+
+  return parts.slice(-2).join(".");
+}
+
 async function getPaletteData(query = "") {
   await ensureMruLoaded();
 
@@ -471,9 +545,34 @@ async function executeAction(payload) {
       return { ok: true, toast: "Closed " + toClose.length + " tab(s)" };
     }
     case "MOVE_TAB_NEW_WINDOW": {
-      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (active) await chrome.windows.create({ tabId: active.id });
+      if (payload.tabId !== undefined) {
+        await chrome.windows.create({ tabId: payload.tabId });
+      } else {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (active) await chrome.windows.create({ tabId: active.id });
+      }
       return { ok: true, toast: "Moved tab to new window" };
+    }
+    case "OPEN_URL_CURRENT_TAB": {
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (active) {
+        await chrome.tabs.update(active.id, { url });
+      } else {
+        await chrome.tabs.create({ url });
+      }
+      return { ok: true };
+    }
+    case "OPEN_URL_NEW_WINDOW": {
+      await chrome.windows.create({ url });
+      return { ok: true };
+    }
+    case "PULL_TAB_TO_CURRENT_WINDOW": {
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (active) {
+        await chrome.tabs.move(payload.tabId, { windowId: active.windowId, index: -1 });
+        await chrome.tabs.update(payload.tabId, { active: true });
+      }
+      return { ok: true, toast: "Moved tab to current window" };
     }
     case "NEW_INCOGNITO": {
       await chrome.windows.create({ incognito: true });
@@ -632,6 +731,33 @@ async function executeAction(payload) {
         ok: true,
         closedCount: ids.length,
         toast: `Closed ${ids.length} ${domain} ${ids.length === 1 ? "tab" : "tabs"}`
+      };
+    }
+    case "CLOSE_BASE_DOMAIN_TABS": {
+      let baseDomain = payload.baseDomain ? extractBaseDomain(payload.baseDomain) : "";
+      if (!baseDomain) {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (active && active.url) {
+          baseDomain = extractBaseDomain(active.url);
+        }
+      }
+      if (!baseDomain) return { ok: false, error: "No base domain specified" };
+
+      const allTabs = await chrome.tabs.query({ currentWindow: true });
+      const ids = [];
+      for (const t of allTabs) {
+        if (t.pinned) continue;
+        if (extractBaseDomain(t.url) === baseDomain) {
+          ids.push(t.id);
+        }
+      }
+      if (ids.length) {
+        await chrome.tabs.remove(ids);
+      }
+      return {
+        ok: true,
+        closedCount: ids.length,
+        toast: `Closed ${ids.length} ${baseDomain} ${ids.length === 1 ? "tab" : "tabs"}`
       };
     }
     case "ASSIGN_TAB_TO_GROUP": {

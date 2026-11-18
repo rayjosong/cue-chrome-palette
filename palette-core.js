@@ -133,6 +133,82 @@
     return "";
   }
 
+  const TWO_PART_PUBLIC_SUFFIXES = new Set([
+    "co.uk", "org.uk", "gov.uk", "ac.uk",
+    "com.au", "net.au", "org.au",
+    "co.nz",
+    "co.jp", "ne.jp", "or.jp",
+    "com.sg", "edu.sg", "gov.sg",
+    "com.br", "com.mx",
+    "co.in", "co.kr", "com.hk", "com.tw"
+  ]);
+
+  function extractBaseDomain(rawUrl = "") {
+    if (!rawUrl || typeof rawUrl !== "string") return "";
+    const trimmed = rawUrl.trim();
+    if (
+      trimmed.startsWith("chrome://") ||
+      trimmed.startsWith("chrome-extension://") ||
+      trimmed.startsWith("edge://") ||
+      trimmed.startsWith("about:") ||
+      trimmed.startsWith("view-source:") ||
+      trimmed.startsWith("devtools://") ||
+      trimmed.startsWith("chrome-search://") ||
+      trimmed.startsWith("data:") ||
+      trimmed.startsWith("javascript:") ||
+      trimmed.startsWith("file://")
+    ) {
+      return "";
+    }
+
+    let host = "";
+    if (/^https?:\/\//i.test(trimmed)) {
+      try {
+        const u = new URL(trimmed);
+        if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+        host = u.hostname.toLowerCase();
+      } catch {
+        return "";
+      }
+    } else if (trimmed.includes("://")) {
+      return "";
+    } else {
+      try {
+        const u = new URL(`http://${trimmed}`);
+        host = u.hostname.toLowerCase();
+      } catch {
+        host = trimmed.toLowerCase();
+      }
+    }
+
+    if (!host) return "";
+
+    if (host.startsWith("www.")) {
+      host = host.slice(4);
+    }
+
+    const isIpv4 = /^\d+\.\d+\.\d+\.\d+$/.test(host);
+    const isIpv6 = host.includes(":") || (host.startsWith("[") && host.endsWith("]"));
+    if (host === "localhost" || isIpv4 || isIpv6) {
+      return host;
+    }
+
+    const parts = host.split(".");
+    if (parts.length <= 1) {
+      return host;
+    }
+
+    const lastTwo = parts.slice(-2).join(".");
+    if (TWO_PART_PUBLIC_SUFFIXES.has(lastTwo)) {
+      if (parts.length >= 3) {
+        return parts.slice(-3).join(".");
+      }
+      return host;
+    }
+
+    return parts.slice(-2).join(".");
+  }
+
   function parseModeAndQuery(raw, chipMode = "all") {
     const trimmed = (raw || "").trimStart();
     if (trimmed.startsWith(">")) {
@@ -171,14 +247,163 @@
     };
   }
 
+  function singleTokenMatch(t, tok, usedIndices) {
+    if (!tok || !t) return { score: 0, indices: [], matchType: "none" };
+
+    if (t === tok) {
+      const indices = Array.from({ length: t.length }, (_, i) => i);
+      return { score: 120, indices, matchType: "exact" };
+    }
+
+    if (t.startsWith(tok)) {
+      const indices = Array.from({ length: tok.length }, (_, i) => i);
+      const hasOverlap = usedIndices && indices.some((i) => usedIndices.has(i));
+      if (!hasOverlap) {
+        return { score: 95, indices, matchType: "prefix" };
+      }
+    }
+
+    const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const wbRegex = new RegExp(`(^|[/\\-_\\.\\s:])(${escaped})`, "gi");
+    let wbMatch;
+    const wbMatches = [];
+    while ((wbMatch = wbRegex.exec(t)) !== null) {
+      const idx = wbMatch.index + (wbMatch[1] ? wbMatch[1].length : 0);
+      const indices = Array.from({ length: tok.length }, (_, i) => idx + i);
+      wbMatches.push({ idx, indices });
+      wbRegex.lastIndex = wbMatch.index + Math.max(1, wbMatch[1] ? wbMatch[1].length : 1);
+    }
+
+    let fromIdx = 0;
+    const subMatches = [];
+    while (true) {
+      const idx = t.indexOf(tok, fromIdx);
+      if (idx === -1) break;
+      const indices = Array.from({ length: tok.length }, (_, i) => idx + i);
+      subMatches.push({ idx, indices });
+      fromIdx = idx + 1;
+    }
+
+    if (wbMatches.length > 0) {
+      const nonOverlapping = usedIndices
+        ? wbMatches.find((m) => !m.indices.some((i) => usedIndices.has(i)))
+        : wbMatches[0];
+      if (nonOverlapping) {
+        return {
+          score: Math.max(76, 90 - Math.min(nonOverlapping.idx, 14)),
+          indices: nonOverlapping.indices,
+          matchType: "boundary"
+        };
+      }
+    }
+
+    if (subMatches.length > 0) {
+      const nonOverlapping = usedIndices
+        ? subMatches.find((m) => !m.indices.some((i) => usedIndices.has(i)))
+        : subMatches[0];
+      if (nonOverlapping) {
+        return {
+          score: Math.max(66, 74 - Math.min(nonOverlapping.idx, 8)),
+          indices: nonOverlapping.indices,
+          matchType: "substring"
+        };
+      }
+    }
+
+    if (wbMatches.length > 0) {
+      const best = wbMatches[0];
+      return {
+        score: Math.max(76, 90 - Math.min(best.idx, 14)),
+        indices: best.indices,
+        matchType: "boundary"
+      };
+    }
+
+    if (subMatches.length > 0) {
+      const best = subMatches[0];
+      return {
+        score: Math.max(66, 74 - Math.min(best.idx, 8)),
+        indices: best.indices,
+        matchType: "substring"
+      };
+    }
+
+    function findSubseq(allowOverlap) {
+      let qi = 0;
+      let score = 0;
+      let consecutive = 0;
+      const indices = [];
+      for (let ti = 0; ti < t.length && qi < tok.length; ti++) {
+        if (!allowOverlap && usedIndices && usedIndices.has(ti)) {
+          continue;
+        }
+        if (t[ti] === tok[qi]) {
+          indices.push(ti);
+          qi++;
+          consecutive++;
+          const isBoundary = ti === 0 || /[/\-_.\s:]/.test(t[ti - 1]);
+          score += 2 + consecutive + (isBoundary ? 2 : 0);
+        } else {
+          consecutive = 0;
+        }
+      }
+      return qi === tok.length
+        ? { score: Math.min(52, Math.max(1, score)), indices, matchType: "subsequence" }
+        : null;
+    }
+
+    const subseq = (usedIndices ? findSubseq(false) : null) || findSubseq(true);
+    if (subseq) {
+      return subseq;
+    }
+
+    return { score: 0, indices: [], matchType: "none" };
+  }
+
   function fuzzyMatch(text, query) {
     if (!query) return { score: 1, indices: [] };
     const t = (text || "").toLowerCase();
     const q = query.toLowerCase().trim();
     if (!q) return { score: 1, indices: [] };
+    if (!t) return { score: 0, indices: [] };
     if (t === q) {
       return { score: 120, indices: Array.from({ length: t.length }, (_, i) => i) };
     }
+
+    const tokens = q.split(/\s+/).filter(Boolean);
+    if (tokens.length > 1) {
+      const tokenResults = [];
+      const usedIndices = new Set();
+      for (const tok of tokens) {
+        const res = singleTokenMatch(t, tok, usedIndices);
+        if (!res || res.score === 0) {
+          return { score: 0, indices: [] };
+        }
+        for (const i of res.indices) {
+          usedIndices.add(i);
+        }
+        tokenResults.push(res);
+      }
+
+      const allIndices = Array.from(usedIndices).sort((a, b) => a - b);
+      const isAllSubstring = tokenResults.every(
+        (r) =>
+          r.matchType === "exact" ||
+          r.matchType === "prefix" ||
+          r.matchType === "boundary" ||
+          r.matchType === "substring"
+      );
+
+      if (isAllSubstring) {
+        return { score: 65, indices: allIndices };
+      }
+
+      const avgScore = tokenResults.reduce((sum, r) => sum + r.score, 0) / tokenResults.length;
+      const composite = Math.min(64, Math.max(53, 53 + Math.round((avgScore / 100) * 11)));
+      return { score: composite, indices: allIndices };
+    }
+
     if (t.startsWith(q)) {
       return { score: 95, indices: Array.from({ length: q.length }, (_, i) => i) };
     }
@@ -200,18 +425,6 @@
         score: Math.max(66, 74 - Math.min(idx, 8)),
         indices: Array.from({ length: q.length }, (_, i) => idx + i)
       };
-    }
-
-    const tokens = q.split(/\s+/).filter(Boolean);
-    if (tokens.length > 1 && tokens.every((tok) => t.includes(tok))) {
-      const indexSet = new Set();
-      for (const tok of tokens) {
-        const ti = t.indexOf(tok);
-        if (ti !== -1) {
-          for (let j = 0; j < tok.length; j++) indexSet.add(ti + j);
-        }
-      }
-      return { score: 65, indices: Array.from(indexSet).sort((a, b) => a - b) };
     }
 
     let qi = 0;
@@ -320,13 +533,45 @@
       suggestedGroupTitle = knownBrands[base.toLowerCase()] || base.charAt(0).toUpperCase() + base.slice(1);
     }
 
+    const activeBaseDomain = activeTab ? extractBaseDomain(activeTab.url) : "";
+    const baseDomainTabIds = [];
+    if (activeBaseDomain) {
+      for (const t of targetTabs) {
+        if (extractBaseDomain(t.url) === activeBaseDomain) {
+          baseDomainTabIds.push(t.id);
+        }
+      }
+    }
+
+    const baseDomainMap = new Map();
+    for (const t of targetTabs) {
+      const bd = extractBaseDomain(t.url);
+      if (!bd) continue;
+      if (!baseDomainMap.has(bd)) {
+        baseDomainMap.set(bd, []);
+      }
+      baseDomainMap.get(bd).push(t.id);
+    }
+
+    const baseDomainGroups = [];
+    for (const [baseDomain, tabIds] of baseDomainMap.entries()) {
+      if (tabIds.length > 1) {
+        baseDomainGroups.push({ baseDomain, tabIds, count: tabIds.length });
+      }
+    }
+    baseDomainGroups.sort((a, b) => b.count - a.count);
+
     return {
       duplicateTabIds,
       duplicateCount: duplicateTabIds.length,
       activeDomain,
       domainTabIds,
       domainCount: domainTabIds.length,
-      suggestedGroupTitle
+      suggestedGroupTitle,
+      activeBaseDomain,
+      baseDomainTabIds,
+      baseDomainCount: baseDomainTabIds.length,
+      baseDomainGroups
     };
   }
 
@@ -709,6 +954,79 @@
           }
         }
       );
+    }
+
+    if (analysis.activeBaseDomain && analysis.baseDomainCount > 1 && analysis.baseDomainCount > analysis.domainCount) {
+      actions.push(
+        {
+          id: "act-group-base-domain",
+          kind: "action",
+          section: "Actions",
+          title: `Group All ${analysis.activeBaseDomain} Website Tabs (${analysis.baseDomainCount})…`,
+          subtitle: `Assign all ${analysis.baseDomainCount} tabs across *.${analysis.activeBaseDomain} into a group`,
+          badge: "Website",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "layers",
+          enterVerb: "Group",
+          priority: 13.6,
+          keepsOpen: true,
+          searchText: `group all base website domain tabs ${analysis.activeBaseDomain}`,
+          actionDescriptor: {
+            type: "OPEN_GROUP_PICKER",
+            tabIds: analysis.baseDomainTabIds,
+            defaultTitle: analysis.suggestedGroupTitle || analysis.activeBaseDomain,
+            domain: analysis.activeBaseDomain
+          }
+        },
+        {
+          id: "act-close-base-domain",
+          kind: "action",
+          section: "Actions",
+          title: `Close All ${analysis.activeBaseDomain} Website Tabs (${analysis.baseDomainCount})`,
+          subtitle: `Closes all ${analysis.baseDomainCount} unpinned tabs across *.${analysis.activeBaseDomain} in this window`,
+          badge: "Website",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "x",
+          enterVerb: "Close",
+          priority: 11.6,
+          keepsOpen: true,
+          searchText: `close all base website domain tabs ${analysis.activeBaseDomain}`,
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: analysis.activeBaseDomain },
+            keepsOpen: true
+          }
+        }
+      );
+    }
+
+    if (analysis.baseDomainGroups && analysis.baseDomainGroups.length) {
+      for (const bg of analysis.baseDomainGroups) {
+        if (bg.baseDomain && bg.baseDomain !== analysis.activeBaseDomain && bg.count > 1) {
+          actions.push({
+            id: `act-close-site-${bg.baseDomain}`,
+            kind: "action",
+            section: "Actions",
+            title: `Close All ${bg.baseDomain} Website Tabs (${bg.count})`,
+            subtitle: `Closes all ${bg.count} unpinned tabs from ${bg.baseDomain} in this window`,
+            badge: "Website",
+            badgeClass: "qc-badge-action",
+            iconClass: "qc-icon-action",
+            iconName: "x",
+            enterVerb: "Close",
+            priority: 9.2,
+            keepsOpen: true,
+            searchText: `close all base website domain tabs ${bg.baseDomain}`,
+            actionDescriptor: {
+              type: "EXECUTE_ACTION",
+              payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: bg.baseDomain },
+              keepsOpen: true
+            }
+          });
+        }
+      }
     }
 
     actions.push(
@@ -1298,6 +1616,7 @@
     stripTrackingParams,
     formatMarkdownLink,
     extractHostname,
+    extractBaseDomain,
     parseModeAndQuery,
     fuzzyMatch,
     getHighlightRanges,

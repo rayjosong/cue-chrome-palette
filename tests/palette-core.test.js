@@ -440,3 +440,202 @@ test("buildResults gates /e extensions behind optional management permission whe
   assert.equal(gated.items[0].id, "ext-enable-permission");
   assert.equal(gated.items[0].actionDescriptor.payload.action, "OPEN_OPTIONS");
 });
+
+test("fuzzyMatch handles multi-token queries with word-boundary, substring, and subsequence matching", () => {
+  // Multi-token substring / boundary match (score = 65)
+  const allSubstring = Core.fuzzyMatch("React JavaScript Documentation", "react doc");
+  assert.equal(allSubstring.score, 65);
+  assert.deepEqual(allSubstring.indices, [0, 1, 2, 3, 4, 17, 18, 19]);
+
+  // Multi-token subsequence match (e.g. "gh pr" against "GitHub Pull Requests")
+  const ghPr = Core.fuzzyMatch("GitHub Pull Requests", "gh pr");
+  assert.ok(ghPr.score >= 53 && ghPr.score <= 64, `Expected score in [53, 64], got ${ghPr.score}`);
+  assert.deepEqual(ghPr.indices, [0, 3, 7, 12]);
+
+  // Multi-token subsequence match (e.g. "cmd plt" against "Command Palette")
+  const cmdPlt = Core.fuzzyMatch("Command Palette", "cmd plt");
+  assert.ok(cmdPlt.score >= 53 && cmdPlt.score <= 64, `Expected score in [53, 64], got ${cmdPlt.score}`);
+  assert.deepEqual(cmdPlt.indices, [0, 2, 6, 8, 10, 12]);
+
+  // Ranking hierarchy: all-substring multi-token (65) > multi-token subsequence (53..64) > single-pass subsequence (<= 52)
+  const singleSubseq = Core.fuzzyMatch("Command Palette", "cmdplt");
+  assert.ok(allSubstring.score > ghPr.score, `Expected allSubstring (${allSubstring.score}) > ghPr (${ghPr.score})`);
+  assert.ok(ghPr.score > singleSubseq.score, `Expected ghPr (${ghPr.score}) > singleSubseq (${singleSubseq.score})`);
+
+  // Repeated tokens in query match distinct occurrences cleanly
+  const repeated = Core.fuzzyMatch("Quick Quick Settings", "quick quick");
+  assert.equal(repeated.score, 65);
+  assert.deepEqual(repeated.indices, [0, 1, 2, 3, 4, 6, 7, 8, 9, 10]);
+
+  // Multi-token query where one token fails to match returns score 0
+  const noMatch = Core.fuzzyMatch("GitHub Pull Requests", "gh xyz");
+  assert.equal(noMatch.score, 0);
+  assert.deepEqual(noMatch.indices, []);
+});
+
+test("getHighlightRanges accurately produces multiple highlight segments on multi-token queries", () => {
+  // Multi-token substring: "react doc" in "React JavaScript Documentation"
+  const multiSubRanges = Core.getHighlightRanges("React JavaScript Documentation", "react doc");
+  assert.deepEqual(multiSubRanges, [
+    { text: "React", matched: true },
+    { text: " JavaScript ", matched: false },
+    { text: "Doc", matched: true },
+    { text: "umentation", matched: false }
+  ]);
+  assert.equal(multiSubRanges.map((s) => s.text).join(""), "React JavaScript Documentation");
+
+  // Multi-token subsequence: "gh pr" in "GitHub Pull Requests"
+  const ghPrRanges = Core.getHighlightRanges("GitHub Pull Requests", "gh pr");
+  assert.deepEqual(ghPrRanges, [
+    { text: "G", matched: true },
+    { text: "it", matched: false },
+    { text: "H", matched: true },
+    { text: "ub ", matched: false },
+    { text: "P", matched: true },
+    { text: "ull ", matched: false },
+    { text: "R", matched: true },
+    { text: "equests", matched: false }
+  ]);
+  assert.equal(ghPrRanges.map((s) => s.text).join(""), "GitHub Pull Requests");
+
+  // Multi-token subsequence: "cmd plt" in "Command Palette"
+  const cmdPltRanges = Core.getHighlightRanges("Command Palette", "cmd plt");
+  assert.deepEqual(cmdPltRanges, [
+    { text: "C", matched: true },
+    { text: "o", matched: false },
+    { text: "m", matched: true },
+    { text: "man", matched: false },
+    { text: "d", matched: true },
+    { text: " ", matched: false },
+    { text: "P", matched: true },
+    { text: "a", matched: false },
+    { text: "l", matched: true },
+    { text: "e", matched: false },
+    { text: "t", matched: true },
+    { text: "te", matched: false }
+  ]);
+  assert.equal(cmdPltRanges.map((s) => s.text).join(""), "Command Palette");
+});
+
+test("extractBaseDomain detects root/registrable domains across subdomains, multi-part suffixes, and edge cases", () => {
+  // Bare subdomains specified in requirements
+  assert.equal(Core.extractBaseDomain("mail.google.com"), "google.com");
+  assert.equal(Core.extractBaseDomain("docs.google.com"), "google.com");
+  assert.equal(Core.extractBaseDomain("www.github.com"), "github.com");
+  assert.equal(Core.extractBaseDomain("news.bbc.co.uk"), "bbc.co.uk");
+  assert.equal(Core.extractBaseDomain("localhost:3000"), "localhost");
+
+  // Full URLs with protocol & paths
+  assert.equal(Core.extractBaseDomain("https://mail.google.com/mail/u/0/#inbox"), "google.com");
+  assert.equal(Core.extractBaseDomain("https://docs.google.com/document/d/123"), "google.com");
+  assert.equal(Core.extractBaseDomain("http://gist.github.com/user/123"), "github.com");
+  assert.equal(Core.extractBaseDomain("http://localhost:3000/app"), "localhost");
+  assert.equal(Core.extractBaseDomain("https://sub.domain.co.jp/path"), "domain.co.jp");
+  assert.equal(Core.extractBaseDomain("https://api.service.com.au/v1"), "service.com.au");
+
+  // Single label, IPs, localhost
+  assert.equal(Core.extractBaseDomain("localhost"), "localhost");
+  assert.equal(Core.extractBaseDomain("corp-intranet"), "corp-intranet");
+  assert.equal(Core.extractBaseDomain("127.0.0.1"), "127.0.0.1");
+  assert.equal(Core.extractBaseDomain("http://192.168.1.1:8080/admin"), "192.168.1.1");
+
+  // Non-web or invalid URLs return ""
+  assert.equal(Core.extractBaseDomain("chrome://extensions"), "");
+  assert.equal(Core.extractBaseDomain("about:blank"), "");
+  assert.equal(Core.extractBaseDomain("edge://settings"), "");
+  assert.equal(Core.extractBaseDomain("file:///Users/test/file.txt"), "");
+  assert.equal(Core.extractBaseDomain(""), "");
+  assert.equal(Core.extractBaseDomain(null), "");
+});
+
+test("analyzeTabs computes activeBaseDomain, baseDomainTabIds, baseDomainCount, and baseDomainGroups", () => {
+  const tabs = [
+    { id: 1, url: "https://mail.google.com/mail/u/0", currentWindow: true, active: true },
+    { id: 2, url: "https://docs.google.com/document/d/1", currentWindow: true, active: false },
+    { id: 3, url: "https://calendar.google.com/calendar", currentWindow: true, active: false },
+    { id: 4, url: "https://github.com/issues", currentWindow: true, active: false },
+    { id: 5, url: "https://gist.github.com/user/1", currentWindow: true, active: false },
+    { id: 6, url: "https://youtube.com/watch?v=1", currentWindow: true, active: false }
+  ];
+
+  const analysis = Core.analyzeTabs(tabs, tabs[0]);
+
+  // Existing properties preserved
+  assert.equal(analysis.activeDomain, "mail.google.com");
+  assert.equal(analysis.domainCount, 1);
+  assert.deepEqual(analysis.domainTabIds, [1]);
+
+  // Base domain analysis
+  assert.equal(analysis.activeBaseDomain, "google.com");
+  assert.equal(analysis.baseDomainCount, 3);
+  assert.deepEqual(analysis.baseDomainTabIds, [1, 2, 3]);
+
+  // baseDomainGroups (sorted descending by count)
+  assert.ok(Array.isArray(analysis.baseDomainGroups));
+  assert.equal(analysis.baseDomainGroups.length, 2);
+  assert.deepEqual(analysis.baseDomainGroups[0], {
+    baseDomain: "google.com",
+    tabIds: [1, 2, 3],
+    count: 3
+  });
+  assert.deepEqual(analysis.baseDomainGroups[1], {
+    baseDomain: "github.com",
+    tabIds: [4, 5],
+    count: 2
+  });
+});
+
+test("buildResults surfaces act-group-base-domain, act-close-base-domain, and act-close-site-<baseDomain>", () => {
+  const data = {
+    activeTab: { id: 1, title: "Gmail", url: "https://mail.google.com/mail/u/0", groupId: -1 },
+    tabs: [
+      { id: 1, title: "Gmail", url: "https://mail.google.com/mail/u/0", currentWindow: true, active: true },
+      { id: 2, title: "Google Docs", url: "https://docs.google.com/document/d/1", currentWindow: true, active: false },
+      { id: 3, title: "Google Calendar", url: "https://calendar.google.com/calendar", currentWindow: true, active: false },
+      { id: 4, title: "GitHub Issues", url: "https://github.com/issues", currentWindow: true, active: false },
+      { id: 5, title: "GitHub Gist", url: "https://gist.github.com/user/1", currentWindow: true, active: false }
+    ]
+  };
+
+  const res = Core.buildResults(data, ">", "all");
+
+  // act-group-base-domain
+  const groupBaseAct = res.items.find((i) => i.id === "act-group-base-domain");
+  assert.ok(groupBaseAct, "act-group-base-domain should be present");
+  assert.equal(groupBaseAct.title, "Group All google.com Website Tabs (3)…");
+  assert.equal(groupBaseAct.subtitle, "Assign all 3 tabs across *.google.com into a group");
+  assert.equal(groupBaseAct.badge, "Website");
+  assert.equal(groupBaseAct.priority, 13.6);
+  assert.deepEqual(groupBaseAct.actionDescriptor, {
+    type: "OPEN_GROUP_PICKER",
+    tabIds: [1, 2, 3],
+    defaultTitle: "Mail",
+    domain: "google.com"
+  });
+
+  // act-close-base-domain
+  const closeBaseAct = res.items.find((i) => i.id === "act-close-base-domain");
+  assert.ok(closeBaseAct, "act-close-base-domain should be present");
+  assert.equal(closeBaseAct.title, "Close All google.com Website Tabs (3)");
+  assert.equal(closeBaseAct.subtitle, "Closes all 3 unpinned tabs across *.google.com in this window");
+  assert.equal(closeBaseAct.badge, "Website");
+  assert.equal(closeBaseAct.priority, 11.6);
+  assert.deepEqual(closeBaseAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: "google.com" },
+    keepsOpen: true
+  });
+
+  // Other multi-tab site in baseDomainGroups: act-close-site-github.com
+  const closeSiteAct = res.items.find((i) => i.id === "act-close-site-github.com");
+  assert.ok(closeSiteAct, "act-close-site-github.com should be present");
+  assert.equal(closeSiteAct.title, "Close All github.com Website Tabs (2)");
+  assert.equal(closeSiteAct.subtitle, "Closes all 2 unpinned tabs from github.com in this window");
+  assert.equal(closeSiteAct.badge, "Website");
+  assert.equal(closeSiteAct.priority, 9.2);
+  assert.deepEqual(closeSiteAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: "github.com" },
+    keepsOpen: true
+  });
+});

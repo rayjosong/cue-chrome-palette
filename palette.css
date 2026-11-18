@@ -178,9 +178,9 @@
   z-index: 2147483647;
   background: var(--qc-backdrop);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 16px;
+  padding: 13vh 16px 16px;
   animation: qc-fade-in 0.1s ease-out;
 }
 
@@ -192,7 +192,7 @@
   position: static;
   background: var(--qc-bg-solid);
   backdrop-filter: none;
-  padding-top: 0;
+  padding: 0;
   display: block;
   width: 650px;
   animation: none;
@@ -210,7 +210,8 @@
 
 .qc-modal {
   width: min(650px, 92vw);
-  height: min(520px, 86vh);
+  height: auto;
+  max-height: min(520px, 82vh);
   background: var(--qc-bg);
   backdrop-filter: blur(28px) saturate(180%);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
@@ -783,15 +784,63 @@
   position: absolute;
   right: 12px;
   bottom: 42px;
-  width: 240px;
-  max-height: 260px;
-  overflow-y: auto;
+  width: 280px;
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--qc-bg-solid);
   border: 1px solid var(--qc-border);
   border-radius: 12px;
   box-shadow: var(--qc-shadow);
-  padding: 6px;
+  padding: 0;
   z-index: 10;
+}
+
+.qc-popover-search {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--qc-divider);
+  flex-shrink: 0;
+}
+
+.qc-popover-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--qc-text);
+  font-size: 12.5px;
+  font-family: inherit;
+}
+
+.qc-popover-input::placeholder {
+  color: var(--qc-text-ghost);
+}
+
+.qc-popover-list {
+  overflow-y: auto;
+  max-height: 240px;
+  padding: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--qc-scroll-thumb) transparent;
+}
+
+.qc-popover-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.qc-popover-list::-webkit-scrollbar-thumb {
+  background: var(--qc-scroll-thumb);
+  border-radius: 999px;
+}
+
+.qc-popover-empty {
+  padding: 14px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--qc-text-faint);
 }
 
 .qc-actions-popover .qc-item {
@@ -806,6 +855,12 @@
 
 .qc-actions-popover .qc-item-title {
   font-size: 12.5px;
+}
+
+.qc-popover-shortcut,
+.qc-actions-popover .qc-kbd {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .qc-breadcrumb {
@@ -823,6 +878,15 @@
 }
 
 @media (max-height: 560px) {
+  .qc-backdrop:not(.qc-is-popup) {
+    padding-top: 4vh;
+  }
+  .qc-modal {
+    max-height: 90vh;
+  }
+  .qc-is-popup .qc-modal {
+    max-height: 520px;
+  }
   .qc-list {
     max-height: 52vh;
   }

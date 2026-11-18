@@ -7,6 +7,7 @@
   const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
   const modSymbol = isMac ? "⌘" : "Ctrl+";
   const delSymbol = isMac ? "⌘⌫" : "Ctrl+Bksp";
+  const shiftDelSymbol = isMac ? "⌘⇧⌫" : "Ctrl+Shift+Bksp";
 
   function sendRuntimeMessage(message) {
     return new Promise((resolve) => {
@@ -304,6 +305,19 @@
     popover.className = "qc-actions-popover";
     popover.style.display = "none";
 
+    const popoverSearch = document.createElement("div");
+    popoverSearch.className = "qc-popover-search";
+    const popoverInput = document.createElement("input");
+    popoverInput.className = "qc-popover-input";
+    popoverInput.type = "text";
+    popoverInput.placeholder = "Filter actions…";
+    popoverSearch.appendChild(popoverInput);
+
+    const popoverList = document.createElement("div");
+    popoverList.className = "qc-popover-list";
+
+    popover.append(popoverSearch, popoverList);
+
     modal.append(searchRow, chipsBar, colorBar, listEl, toastEl, liveRegion, footer, popover);
     container.appendChild(backdrop);
 
@@ -328,7 +342,14 @@
     let popoverOpen = false;
     let popoverItems = [];
     let popoverIndex = 0;
+    let popoverQuery = "";
     let toastTimer = null;
+
+    popoverInput.addEventListener("input", () => {
+      popoverQuery = popoverInput.value;
+      popoverIndex = 0;
+      renderPopover();
+    });
 
     function showToast(msg) {
       if (!msg) return;
@@ -509,9 +530,11 @@
         const tabDomain = Core.extractHostname(item.subtitle || "");
         const tabAnalysis = Core.analyzeTabs(data.tabs || [], { url: item.subtitle || "" });
         const isBookmarked = (data.bookmarks || []).some((b) => b.url === item.subtitle);
+        const tabBaseDomain = Core.extractBaseDomain ? Core.extractBaseDomain(item.subtitle || "") : tabDomain;
         list.push(
           {
             title: "Switch to Tab",
+            shortcut: "↵",
             iconName: "globe",
             closesPalette: true,
             run: () => item.run()
@@ -545,7 +568,8 @@
         }
         list.push(
           {
-            title: `Add / Move Tab to Group… (${modSymbol}G)`,
+            title: "Add / Move Tab to Group…",
+            shortcut: `${modSymbol}G`,
             iconName: "layers",
             closesPalette: false,
             run: async () => {
@@ -556,7 +580,8 @@
             }
           },
           {
-            title: `Pin / Unpin Tab (${modSymbol}P)`,
+            title: "Pin / Unpin Tab",
+            shortcut: `${modSymbol}P`,
             iconName: "pin",
             closesPalette: false,
             run: async () => {
@@ -565,7 +590,8 @@
             }
           },
           {
-            title: `Mute / Unmute Tab (${modSymbol}M)`,
+            title: "Mute / Unmute Tab",
+            shortcut: `${modSymbol}M`,
             iconName: "mute",
             closesPalette: false,
             run: async () => {
@@ -574,12 +600,25 @@
             }
           },
           {
-            title: `Duplicate Tab (${modSymbol}D)`,
+            title: "Duplicate Tab",
+            shortcut: `${modSymbol}D`,
             iconName: "copy",
             closesPalette: false,
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "DUPLICATE_TAB", tabId: item.tabId } });
               if (res?.toast) showToast(res.toast);
+            }
+          },
+          {
+            title: "Copy Tab URL",
+            shortcut: `${modSymbol}C`,
+            iconName: "link",
+            closesPalette: false,
+            run: async () => {
+              if (item.subtitle && navigator.clipboard) {
+                await navigator.clipboard.writeText(item.subtitle);
+                showToast("Copied URL to clipboard");
+              }
             }
           }
         );
@@ -641,6 +680,21 @@
           );
         }
         if (tabDomain && tabAnalysis.domainCount > 1) {
+          const closeDomainAction = {
+            title: `Close All ${tabDomain} Tabs (${tabAnalysis.domainCount})`,
+            iconName: "x",
+            closesPalette: false,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "CLOSE_DOMAIN_TABS", domain: tabDomain }
+              });
+              if (res?.toast) showToast(res.toast);
+            }
+          };
+          if (tabAnalysis.baseDomainCount === tabAnalysis.domainCount) {
+            closeDomainAction.shortcut = shiftDelSymbol;
+          }
           list.push(
             {
               title: `Group All ${tabDomain} Tabs (${tabAnalysis.domainCount})…`,
@@ -654,14 +708,36 @@
                 });
               }
             },
+            closeDomainAction
+          );
+        }
+        if (
+          tabBaseDomain &&
+          tabAnalysis.baseDomainCount > 1 &&
+          tabAnalysis.baseDomainCount > tabAnalysis.domainCount
+        ) {
+          list.push(
             {
-              title: `Close All ${tabDomain} Tabs (${tabAnalysis.domainCount})`,
+              title: `Group All ${tabBaseDomain} Website Tabs (${tabAnalysis.baseDomainCount})…`,
+              iconName: "layers",
+              closesPalette: false,
+              run: async () => {
+                openGroupPicker({
+                  tabIds: tabAnalysis.baseDomainTabIds,
+                  defaultTitle: tabAnalysis.suggestedGroupTitle || tabBaseDomain,
+                  domain: tabBaseDomain
+                });
+              }
+            },
+            {
+              title: `Close All ${tabBaseDomain} Website Tabs (${tabAnalysis.baseDomainCount})`,
+              shortcut: shiftDelSymbol,
               iconName: "x",
               closesPalette: false,
               run: async () => {
                 const res = await sendRuntimeMessage({
                   type: "EXECUTE_ACTION",
-                  payload: { action: "CLOSE_DOMAIN_TABS", domain: tabDomain }
+                  payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain: tabBaseDomain }
                 });
                 if (res?.toast) showToast(res.toast);
               }
@@ -669,7 +745,8 @@
           );
         }
         list.push({
-          title: `Close Tab (${delSymbol})`,
+          title: "Close Tab",
+          shortcut: delSymbol,
           iconName: "x",
           closesPalette: false,
           run: async () => {
@@ -681,6 +758,7 @@
         list.push(
           {
             title: "View Tabs in Group",
+            shortcut: "↵",
             iconName: "layers",
             closesPalette: false,
             run: () => {
@@ -790,6 +868,7 @@
       } else {
         list.push({
           title: item.enterVerb || "Open",
+          shortcut: "↵",
           iconName: item.iconName || "globe",
           closesPalette: !item.keepsOpen,
           run: () => item.run()
@@ -798,6 +877,7 @@
           list.push(
             {
               title: "Copy URL",
+              shortcut: `${modSymbol}C`,
               iconName: "link",
               closesPalette: false,
               run: async () => {
@@ -832,15 +912,40 @@
       return list;
     }
 
+    function getFilteredPopoverItems() {
+      const q = popoverQuery.trim();
+      if (!q) return popoverItems;
+      return popoverItems.filter((act) => Core.fuzzyMatch(act.title, q).score > 0);
+    }
+
     function closePopover() {
       popoverOpen = false;
       popover.style.display = "none";
-      popover.textContent = "";
+      popoverQuery = "";
+      if (popoverInput) popoverInput.value = "";
+      popoverList.textContent = "";
+      input.focus();
     }
 
     function renderPopover() {
-      popover.textContent = "";
-      popoverItems.forEach((act, idx) => {
+      const filtered = getFilteredPopoverItems();
+      popoverList.textContent = "";
+
+      if (filtered.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "qc-popover-empty";
+        empty.textContent = "No matching actions";
+        popoverList.appendChild(empty);
+        return;
+      }
+
+      if (popoverIndex >= filtered.length) {
+        popoverIndex = 0;
+      } else if (popoverIndex < 0) {
+        popoverIndex = 0;
+      }
+
+      filtered.forEach((act, idx) => {
         const row = document.createElement("div");
         row.className = `qc-item${idx === popoverIndex ? " qc-selected" : ""}`;
         const iconBox = document.createElement("div");
@@ -850,13 +955,26 @@
         main.className = "qc-item-main";
         const title = document.createElement("div");
         title.className = "qc-item-title";
-        title.textContent = act.title;
+        renderHighlightedText(title, act.title, popoverQuery);
         main.appendChild(title);
         row.append(iconBox, main);
+
+        if (act.shortcut) {
+          const kbd = document.createElement("kbd");
+          kbd.className = "qc-kbd qc-popover-shortcut";
+          kbd.textContent = act.shortcut;
+          row.appendChild(kbd);
+        }
+
         row.addEventListener("mouseenter", () => {
           popoverIndex = idx;
-          renderPopover();
+          const rows = popoverList.querySelectorAll(".qc-item");
+          rows.forEach((r, i) => {
+            if (i === idx) r.classList.add("qc-selected");
+            else r.classList.remove("qc-selected");
+          });
         });
+
         row.addEventListener("click", async () => {
           closePopover();
           await act.run();
@@ -866,8 +984,12 @@
             await refreshData();
           }
         });
-        popover.appendChild(row);
+
+        popoverList.appendChild(row);
       });
+
+      const selectedEl = popoverList.querySelector(".qc-selected");
+      if (selectedEl) selectedEl.scrollIntoView({ block: "nearest" });
     }
 
     function togglePopover() {
@@ -879,15 +1001,17 @@
       popoverItems = getActionsForItem(selected);
       if (!popoverItems.length) return;
       popoverIndex = 0;
+      popoverQuery = "";
+      if (popoverInput) popoverInput.value = "";
       popoverOpen = true;
-      popover.style.display = "block";
+      popover.style.display = "flex";
       renderPopover();
+      popoverInput.focus();
     }
 
     actionsTrigger.addEventListener("click", (e) => {
       e.stopPropagation();
       togglePopover();
-      input.focus();
     });
 
     function closeWithMotion() {
@@ -930,13 +1054,28 @@
         ];
       } else if (selected) {
         if (selected.kind === "tab") {
+          const tabAnalysis = Core.analyzeTabs(data.tabs || [], { url: selected.subtitle || "" });
           specs = [
             ["↵", "Switch"],
-            [delSymbol, "Close"],
+            [delSymbol, "Close"]
+          ];
+          if ((tabAnalysis.baseDomainCount || tabAnalysis.domainCount) > 1) {
+            specs.push([shiftDelSymbol, "Close Site"]);
+          }
+          specs.push(
             [`${modSymbol}G`, "Group"],
             [`${modSymbol}P`, "Pin"],
             [`${modSymbol}M`, "Mute"],
             [`${modSymbol}D`, "Dup"]
+          );
+          if (selected.badge === "Other Window") {
+            specs.push([`${modSymbol}↵`, "Bring Here"]);
+          }
+        } else if (selected.actionDescriptor?.payload?.action === "OPEN_URL") {
+          specs = [
+            ["↵", selected.enterVerb || "Open"],
+            [`${modSymbol}↵`, "Current Tab"],
+            ["⇧↵", "New Window"]
           ];
         } else if (selected.actionDescriptor?.payload?.action === "OPEN_URL") {
           specs = [
@@ -1484,7 +1623,7 @@
       const mod = e.metaKey || e.ctrlKey;
       const selected = currentItems[selectedIndex];
 
-      if (document.activeElement !== input && e.key.length === 1 && !mod && !e.altKey) {
+      if (!popoverOpen && document.activeElement !== input && e.key.length === 1 && !mod && !e.altKey) {
         input.focus();
       }
 
@@ -1495,6 +1634,7 @@
       }
 
       if (popoverOpen) {
+        const filtered = getFilteredPopoverItems();
         if (e.key === "Escape") {
           e.preventDefault();
           closePopover();
@@ -1502,25 +1642,31 @@
         }
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          popoverIndex = (popoverIndex + 1) % popoverItems.length;
-          renderPopover();
+          if (filtered.length > 0) {
+            popoverIndex = (popoverIndex + 1) % filtered.length;
+            renderPopover();
+          }
           return;
         }
         if (e.key === "ArrowUp") {
           e.preventDefault();
-          popoverIndex = (popoverIndex - 1 + popoverItems.length) % popoverItems.length;
-          renderPopover();
+          if (filtered.length > 0) {
+            popoverIndex = (popoverIndex - 1 + filtered.length) % filtered.length;
+            renderPopover();
+          }
           return;
         }
-        if (e.key === "Enter" && popoverItems[popoverIndex]) {
+        if (e.key === "Enter") {
           e.preventDefault();
-          const act = popoverItems[popoverIndex];
-          closePopover();
-          await act.run();
-          if (act.closesPalette) {
-            closeWithMotion();
-          } else {
-            await refreshData();
+          if (filtered[popoverIndex]) {
+            const act = filtered[popoverIndex];
+            closePopover();
+            await act.run();
+            if (act.closesPalette) {
+              closeWithMotion();
+            } else {
+              await refreshData();
+            }
           }
           return;
         }
@@ -1638,33 +1784,44 @@
 
       if (e.key === "Enter" && selected) {
         e.preventDefault();
-        const isOpenUrl = selected.actionDescriptor?.payload?.action === "OPEN_URL";
-        if (isOpenUrl) {
-          if (e.shiftKey) {
-            recordItemUsage(selected);
+        if (selected.actionDescriptor?.payload?.action === "OPEN_URL" && selected.actionDescriptor.payload.url) {
+          if (mod) {
             await sendRuntimeMessage({
               type: "EXECUTE_ACTION",
-              payload: {
-                ...selected.actionDescriptor.payload,
-                target: "current"
-              }
+              payload: { action: "OPEN_URL_CURRENT_TAB", url: selected.actionDescriptor.payload.url }
+            });
+            recordItemUsage(selected);
+            closeWithMotion();
+            return;
+          }
+          if (e.shiftKey) {
+            await sendRuntimeMessage({
+              type: "EXECUTE_ACTION",
+              payload: { action: "OPEN_URL_NEW_WINDOW", url: selected.actionDescriptor.payload.url }
+            });
+            recordItemUsage(selected);
+            closeWithMotion();
+            return;
+          }
+        } else if (selected.kind === "tab" && selected.tabId) {
+          if (mod) {
+            await sendRuntimeMessage({
+              type: "EXECUTE_ACTION",
+              payload: { action: "PULL_TAB_TO_CURRENT_WINDOW", tabId: selected.tabId }
             });
             closeWithMotion();
             return;
           }
-          if (mod) {
-            recordItemUsage(selected);
+          if (e.shiftKey) {
             await sendRuntimeMessage({
               type: "EXECUTE_ACTION",
-              payload: {
-                ...selected.actionDescriptor.payload,
-                target: "background"
-              }
+              payload: { action: "MOVE_TAB_NEW_WINDOW", tabId: selected.tabId }
             });
-            showToast("Opened in background tab");
+            closeWithMotion();
             return;
           }
         }
+
         await selected.run();
         if (!selected.keepsOpen) closeWithMotion();
         return;
@@ -1673,7 +1830,20 @@
       if (mod && selected && selected.kind === "tab") {
         const k = e.key.toLowerCase();
         const currentId = selected.id;
-        if (e.key === "Backspace") {
+        if (e.key === "Backspace" && e.shiftKey) {
+          e.preventDefault();
+          const baseDomain =
+            (Core.extractBaseDomain && Core.extractBaseDomain(selected.subtitle || "")) ||
+            Core.extractHostname(selected.subtitle || "");
+          if (baseDomain) {
+            const res = await sendRuntimeMessage({
+              type: "EXECUTE_ACTION",
+              payload: { action: "CLOSE_BASE_DOMAIN_TABS", baseDomain }
+            });
+            if (res?.toast) showToast(res.toast);
+            await refreshData();
+          }
+        } else if (e.key === "Backspace") {
           e.preventDefault();
           const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_TAB", tabId: selected.tabId } });
           if (res?.toast) showToast(res.toast);
@@ -1700,7 +1870,19 @@
           const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "DUPLICATE_TAB", tabId: selected.tabId } });
           if (res?.toast) showToast(res.toast);
           await refreshData(currentId);
+        } else if (k === "c" && selected.subtitle) {
+          e.preventDefault();
+          if (navigator.clipboard) {
+            await navigator.clipboard.writeText(selected.subtitle);
+            showToast("Copied URL to clipboard");
+          }
         }
+      }
+    });
+
+    backdrop.addEventListener("mousedown", (e) => {
+      if (popoverOpen && !popover.contains(e.target) && !actionsTrigger.contains(e.target)) {
+        closePopover();
       }
     });
 
@@ -1710,6 +1892,7 @@
       });
     }
 
+    chipMode = "all";
     refreshData();
     setTimeout(() => input.focus(), 0);
 
