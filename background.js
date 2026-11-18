@@ -884,6 +884,135 @@ async function executeAction(payload) {
       }
       return { ok: true, toast: `Merged ${movedCount} tab(s) into current window` };
     }
+    case "SPLIT_TABS": {
+      const requestedIds = Array.isArray(payload.tabIds) ? payload.tabIds : [];
+      const uniqueIds = [...new Set(requestedIds)].filter((id) => Number.isFinite(id));
+      if (uniqueIds.length < 2) {
+        return { ok: false, error: "Select at least 2 tabs to split" };
+      }
+
+      const allTabs = await chrome.tabs.query({});
+      const tabById = new Map(allTabs.map((t) => [t.id, t]));
+      const validTabs = uniqueIds.map((id) => tabById.get(id)).filter(Boolean);
+      if (validTabs.length < 2) {
+        return { ok: false, error: "Select at least 2 open tabs to split" };
+      }
+
+      if (payload.mode === "native" && validTabs.length === 2) {
+        if (typeof chrome.tabs.createSplit !== "function") {
+          return {
+            ok: false,
+            error: "Native Split View API is unavailable in this Chrome version (use Side by Side (Win))"
+          };
+        }
+        const [tab1, tab2] = validTabs;
+        try {
+          if (tab1.splitViewId != null && tab1.splitViewId !== -1 && typeof chrome.tabs.unsplit === "function") {
+            await chrome.tabs.unsplit(tab1.splitViewId);
+          }
+          if (tab2.splitViewId != null && tab2.splitViewId !== -1 && typeof chrome.tabs.unsplit === "function") {
+            await chrome.tabs.unsplit(tab2.splitViewId);
+          }
+          if (tab2.windowId !== tab1.windowId) {
+            await chrome.tabs.move(tab2.id, { windowId: tab1.windowId, index: tab1.index + 1 });
+          } else if (Math.abs(tab2.index - tab1.index) !== 1) {
+            await chrome.tabs.move(tab2.id, { index: tab1.index + 1 });
+          }
+          await chrome.tabs.createSplit([tab1.id, tab2.id]);
+          await chrome.windows.update(tab1.windowId, { focused: true }).catch(() => {});
+          await chrome.tabs.update(tab1.id, { active: true }).catch(() => {});
+          return { ok: true, toast: "Split 2 tabs in window" };
+        } catch (err) {
+          return { ok: false, error: err?.message || "Could not create native Split View" };
+        }
+      }
+
+      const allWindows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+      const winById = new Map(allWindows.map((w) => [w.id, w]));
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const currentWin = (active && winById.get(active.windowId)) || allWindows[0];
+
+      let rects = Array.isArray(payload.rects) && payload.rects.length === validTabs.length
+        ? payload.rects.map((r) => ({
+            left: Math.round(r.left),
+            top: Math.round(r.top),
+            width: Math.max(300, Math.round(r.width)),
+            height: Math.max(200, Math.round(r.height))
+          }))
+        : null;
+
+      if (!rects) {
+        const baseLeft = Number.isFinite(currentWin?.left) ? currentWin.left : 0;
+        const baseTop = Number.isFinite(currentWin?.top) ? currentWin.top : 0;
+        const baseWidth = Math.max(300, Number.isFinite(currentWin?.width) ? currentWin.width : 1200);
+        const baseHeight = Math.max(200, Number.isFinite(currentWin?.height) ? currentWin.height : 800);
+        const colW = Math.floor(baseWidth / validTabs.length);
+        rects = validTabs.map((_, idx) => ({
+          left: baseLeft + idx * colW,
+          top: baseTop,
+          width: idx === validTabs.length - 1 ? baseWidth - colW * (validTabs.length - 1) : colW,
+          height: baseHeight
+        }));
+      }
+
+      const usedWindowIds = new Set();
+      const paneWindowIds = [];
+
+      for (let i = 0; i < validTabs.length; i++) {
+        const tab = validTabs[i];
+        const rect = rects[i];
+        const tabWin = winById.get(tab.windowId);
+        const canReuseCurrent = i === 0 && currentWin && tab.windowId === currentWin.id && !usedWindowIds.has(currentWin.id);
+        const canReuseSolo = tabWin && Array.isArray(tabWin.tabs) && tabWin.tabs.length === 1 && !usedWindowIds.has(tabWin.id);
+
+        if (canReuseCurrent || canReuseSolo) {
+          const targetWinId = tab.windowId;
+          usedWindowIds.add(targetWinId);
+          paneWindowIds.push(targetWinId);
+          await chrome.tabs.update(tab.id, { active: true });
+          if (tabWin && tabWin.state && tabWin.state !== "normal") {
+            await chrome.windows.update(targetWinId, { state: "normal" });
+          }
+          await chrome.windows.update(targetWinId, rect);
+        } else {
+          const created = await chrome.windows.create({
+            tabId: tab.id,
+            incognito: Boolean(tab.incognito),
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+            focused: false
+          });
+          if (created?.id != null) {
+            usedWindowIds.add(created.id);
+            paneWindowIds.push(created.id);
+          }
+        }
+      }
+
+      if (paneWindowIds.length > 0) {
+        await chrome.windows.update(paneWindowIds[0], { focused: true }).catch(() => {});
+      }
+
+      const layoutSuffix = payload.layoutLabel ? ` (${payload.layoutLabel})` : "";
+      return { ok: true, toast: `Split ${validTabs.length} tabs${layoutSuffix}` };
+    }
+    case "UNSPLIT_TAB": {
+      if (typeof chrome.tabs.unsplit !== "function") {
+        return { ok: false, error: "Native Split View API is unavailable in this Chrome version" };
+      }
+      let splitViewId = payload.splitViewId;
+      if (splitViewId == null || splitViewId === -1) {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        splitViewId = active?.splitViewId;
+      }
+      if (splitViewId == null || splitViewId === -1) {
+        return { ok: false, error: "Tab is not in a Split View" };
+      }
+      await chrome.tabs.unsplit(splitViewId);
+      return { ok: true, toast: "Unsplit tab view" };
+    }
     case "CONSOLIDATE_GROUPS_AND_SEPARATE_TABS": {
       if (!chrome.tabGroups) return { ok: false, error: "Tab groups API unavailable" };
       const [active] = await chrome.tabs.query({ active: true, currentWindow: true });

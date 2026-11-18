@@ -95,6 +95,10 @@
         ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
         ["path", { d: "M3 9h18" }]
       ],
+      split: [
+        ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
+        ["path", { d: "M12 3v18" }]
+      ],
       incognito: [
         ["path", { d: "M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" }],
         ["circle", { cx: "12", cy: "12", r: "3" }]
@@ -242,6 +246,7 @@
     let groupPickerContext = null; // { tabIds: number[], defaultTitle: string, domain?: string }
     let groupEditContext = null; // { groupId: number, title: string, color: string }
     let windowPickerContext = null; // { tabId: number }
+    let splitPickerContext = null; // { tabIds: number[], layoutId: string }
     let selectedGroupColor = "blue";
 
     const chipsBar = document.createElement("div");
@@ -257,6 +262,7 @@
         groupPickerContext = null;
         groupEditContext = null;
         windowPickerContext = null;
+        splitPickerContext = null;
         input.placeholder = defaultPlaceholder;
         chipMode = c.id;
         selectedIndex = 0;
@@ -270,6 +276,10 @@
     const colorBar = document.createElement("div");
     colorBar.className = "qc-color-bar";
     colorBar.style.display = "none";
+
+    const splitBar = document.createElement("div");
+    splitBar.className = "qc-split-bar";
+    splitBar.style.display = "none";
 
     const listEl = document.createElement("div");
     listEl.className = "qc-list";
@@ -318,7 +328,7 @@
 
     popover.append(popoverSearch, popoverList);
 
-    modal.append(searchRow, chipsBar, colorBar, listEl, toastEl, liveRegion, footer, popover);
+    modal.append(searchRow, chipsBar, colorBar, splitBar, listEl, toastEl, liveRegion, footer, popover);
     container.appendChild(backdrop);
 
     let data = {
@@ -379,6 +389,7 @@
       groupPickerContext = { tabIds, defaultTitle, domain };
       groupEditContext = null;
       windowPickerContext = null;
+      splitPickerContext = null;
       input.value = "";
       input.placeholder = `Filter existing groups or type a name (default: "${defaultTitle}")…`;
       selectedIndex = 0;
@@ -391,6 +402,7 @@
       activeGroup = null;
       groupPickerContext = null;
       windowPickerContext = null;
+      splitPickerContext = null;
       let colorName = "blue";
       const dataGroup = (data.tabGroups || []).find((g) => g.id === group.groupId);
       if (dataGroup && dataGroup.color) {
@@ -423,8 +435,75 @@
       groupPickerContext = null;
       groupEditContext = null;
       windowPickerContext = { tabId };
+      splitPickerContext = null;
       input.value = "";
       input.placeholder = "Select target window to move tab…";
+      selectedIndex = 0;
+      render();
+      input.focus();
+    }
+
+    function getScreenBounds() {
+      return {
+        left: typeof window.screen?.availLeft === "number" ? window.screen.availLeft : 0,
+        top: typeof window.screen?.availTop === "number" ? window.screen.availTop : 0,
+        width:
+          typeof window.screen?.availWidth === "number" && window.screen.availWidth > 0
+            ? window.screen.availWidth
+            : window.innerWidth || 1200,
+        height:
+          typeof window.screen?.availHeight === "number" && window.screen.availHeight > 0
+            ? window.screen.availHeight
+            : window.innerHeight || 800
+      };
+    }
+
+    async function executeSplitTabs(tabIds, layoutId = "") {
+      const uniqueIds = [...new Set(tabIds)].filter((id) => Number.isFinite(id));
+      if (uniqueIds.length < 2) {
+        showToast("Select at least 2 tabs to split");
+        return false;
+      }
+      const layouts = Core.getAvailableSplitLayouts(uniqueIds.length);
+      const activeLayout = layouts.find((l) => l.id === layoutId) || layouts[0];
+      const isNative = activeLayout?.id === "native" && uniqueIds.length === 2;
+      const payload = isNative
+        ? {
+            action: "SPLIT_TABS",
+            mode: "native",
+            tabIds: uniqueIds,
+            layoutLabel: activeLayout.label
+          }
+        : {
+            action: "SPLIT_TABS",
+            tabIds: uniqueIds,
+            rects: Core.computeSplitLayouts(uniqueIds.length, getScreenBounds(), activeLayout?.id || ""),
+            layoutLabel: activeLayout?.label || ""
+          };
+      const res = await sendRuntimeMessage({
+        type: "EXECUTE_ACTION",
+        payload
+      });
+      if (!res?.ok) {
+        showToast(res?.error || "Could not split tabs");
+        return false;
+      }
+      return true;
+    }
+
+    function openSplitPicker({ tabIds = [], layoutId = "" } = {}) {
+      activeGroup = null;
+      groupPickerContext = null;
+      groupEditContext = null;
+      windowPickerContext = null;
+      const initialIds = tabIds.length
+        ? [...new Set(tabIds)]
+        : data.activeTab?.id != null
+        ? [data.activeTab.id]
+        : [];
+      splitPickerContext = { tabIds: initialIds, layoutId };
+      input.value = "";
+      input.placeholder = "Filter tabs (Tab or click to select, Enter to split)…";
       selectedIndex = 0;
       render();
       input.focus();
@@ -435,6 +514,7 @@
       groupPickerContext = null;
       groupEditContext = null;
       windowPickerContext = null;
+      splitPickerContext = null;
       input.value = "";
       input.placeholder = defaultPlaceholder;
       selectedIndex = 0;
@@ -459,11 +539,16 @@
           openWindowPicker({ tabId: descriptor.tabId });
           return { closesPalette: false };
         }
+        case "OPEN_SPLIT_PICKER": {
+          openSplitPicker({ tabIds: descriptor.tabIds || [] });
+          return { closesPalette: false };
+        }
         case "DRILL_GROUP": {
           activeGroup = descriptor.group;
           groupPickerContext = null;
           groupEditContext = null;
           windowPickerContext = null;
+          splitPickerContext = null;
           input.value = "";
           selectedIndex = 0;
           render();
@@ -474,6 +559,7 @@
           groupPickerContext = null;
           groupEditContext = null;
           windowPickerContext = null;
+          splitPickerContext = null;
           chipMode = "all";
           input.value = descriptor.prefix || "";
           selectedIndex = 0;
@@ -510,6 +596,7 @@
           item.actionDescriptor?.keepsOpen ||
           item.actionDescriptor?.type === "OPEN_GROUP_PICKER" ||
           item.actionDescriptor?.type === "OPEN_WINDOW_PICKER" ||
+          item.actionDescriptor?.type === "OPEN_SPLIT_PICKER" ||
           item.actionDescriptor?.type === "DRILL_GROUP" ||
           item.actionDescriptor?.type === "ENTER_MODE" ||
           item.actionDescriptor?.type === "COPY_TEXT"
@@ -643,6 +730,47 @@
             iconName: "window",
             closesPalette: false,
             run: () => openWindowPicker({ tabId: item.tabId })
+          });
+        }
+        if (data.activeTab && item.tabId !== data.activeTab.id) {
+          list.push({
+            title: "Split with Current Tab",
+            iconName: "split",
+            closesPalette: true,
+            run: async () => {
+              await executeSplitTabs([data.activeTab.id, item.tabId], "native");
+            }
+          });
+        }
+        const rawTab = (data.tabs || []).find((t) => t.id === item.tabId);
+        if (rawTab?.splitViewId != null && rawTab.splitViewId !== -1) {
+          list.push({
+            title: "Unsplit Tab",
+            iconName: "split",
+            closesPalette: false,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "UNSPLIT_TAB", splitViewId: rawTab.splitViewId }
+              });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error);
+              await refreshData();
+            }
+          });
+        }
+        if ((data.tabs || []).length >= 2) {
+          list.push({
+            title: "Add to Split View…",
+            iconName: "split",
+            closesPalette: false,
+            run: () => {
+              const seed =
+                data.activeTab && data.activeTab.id !== item.tabId
+                  ? [data.activeTab.id, item.tabId]
+                  : [item.tabId];
+              openSplitPicker({ tabIds: seed });
+            }
           });
         }
         list.push({
@@ -1052,6 +1180,14 @@
           ["↵", "Move to Window"],
           ["Esc", "Cancel"]
         ];
+      } else if (splitPickerContext) {
+        const count = splitPickerContext.tabIds.length;
+        specs = [
+          ["↵", count >= 2 ? `Split ${count}` : count === 1 ? "Split +1" : "Select"],
+          ["⇥", "Toggle Tab"],
+          [`${modSymbol}L`, "Layout"],
+          ["Esc", "Cancel"]
+        ];
       } else if (selected) {
         if (selected.kind === "tab") {
           const tabAnalysis = Core.analyzeTabs(data.tabs || [], { url: selected.subtitle || "" });
@@ -1209,6 +1345,62 @@
       return [...existingItems, createItem];
     }
 
+    function renderSplitBar() {
+      if (!splitPickerContext) {
+        splitBar.style.display = "none";
+        splitBar.textContent = "";
+        return;
+      }
+      splitBar.style.display = "flex";
+      splitBar.textContent = "";
+
+      const count = splitPickerContext.tabIds.length;
+      const label = document.createElement("span");
+      label.className = "qc-split-bar-label";
+      label.textContent =
+        count >= 2
+          ? `${count} tabs selected`
+          : count === 1
+          ? "1 tab selected · pick 1+ more"
+          : "Pick 2+ tabs to split";
+      splitBar.appendChild(label);
+
+      const controls = document.createElement("div");
+      controls.className = "qc-split-controls";
+
+      const layouts = Core.getAvailableSplitLayouts(Math.max(2, count));
+      const activeLayout = layouts.find((l) => l.id === splitPickerContext.layoutId) || layouts[0];
+      if (activeLayout && splitPickerContext.layoutId !== activeLayout.id) {
+        splitPickerContext.layoutId = activeLayout.id;
+      }
+
+      for (const layout of layouts) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `qc-split-layout-btn${layout.id === activeLayout?.id ? " qc-active" : ""}`;
+        btn.textContent = layout.label;
+        btn.addEventListener("click", () => {
+          splitPickerContext.layoutId = layout.id;
+          render(currentItems[selectedIndex]?.id);
+          input.focus();
+        });
+        controls.appendChild(btn);
+      }
+
+      const goBtn = document.createElement("button");
+      goBtn.type = "button";
+      goBtn.className = "qc-split-go-btn";
+      goBtn.disabled = count < 2;
+      goBtn.textContent = count >= 2 ? `Split ${count}` : "Split";
+      goBtn.addEventListener("click", async () => {
+        const ok = await executeSplitTabs(splitPickerContext.tabIds, splitPickerContext.layoutId);
+        if (ok) closeWithMotion();
+      });
+      controls.appendChild(goBtn);
+
+      splitBar.appendChild(controls);
+    }
+
     function render(preserveId = null) {
       let prefixLabel = "";
       let activeMode = chipMode;
@@ -1217,6 +1409,7 @@
       let modeCounts = {};
 
       renderColorBar();
+      renderSplitBar();
 
       if (groupPickerContext) {
         currentItems = buildGroupPickerItems(cleanQuery);
@@ -1298,6 +1491,63 @@
           })
         );
         prefixLabel = "Move to Window";
+      } else if (splitPickerContext) {
+        const allTabs = data.tabs || [];
+        const activeIdSet = new Set(allTabs.map((t) => t.id));
+        splitPickerContext.tabIds = splitPickerContext.tabIds.filter((id) => activeIdSet.has(id));
+        const selectedIds = splitPickerContext.tabIds;
+        const filteredTabs = cleanQuery
+          ? allTabs.filter((t) => Core.fuzzyMatch(`${t.title} ${t.url}`, cleanQuery).score > 0)
+          : allTabs;
+
+        currentItems = filteredTabs.map((t) => {
+          const paneIdx = selectedIds.indexOf(t.id);
+          const isSelected = paneIdx !== -1;
+          const isCurrent = data.activeTab && t.id === data.activeTab.id;
+          const sameWin = !data.activeTab || t.windowId === data.activeTab.windowId;
+          const badgeText = isSelected
+            ? `Pane ${paneIdx + 1}`
+            : isCurrent
+            ? "Current"
+            : sameWin
+            ? "Tab"
+            : "Other Window";
+          const enterVerb =
+            selectedIds.length >= 2
+              ? "Split"
+              : selectedIds.length === 1 && !isSelected
+              ? "Split +1"
+              : isSelected
+              ? "Deselect"
+              : "Select";
+          return hydrateItem({
+            id: `split-tab-${t.id}`,
+            kind: "split-tab",
+            tabId: t.id,
+            windowId: t.windowId,
+            section: isSelected ? "Selected for Split" : "Open Tabs",
+            title: t.title || t.url || "Untitled Tab",
+            subtitle: t.url || "",
+            favIconUrl: t.favIconUrl,
+            badge: badgeText,
+            badgeClass: isSelected ? "qc-badge-action" : "qc-badge-tab",
+            iconClass: isSelected ? "qc-icon-action" : "qc-icon-tab",
+            iconName: isSelected ? "split" : "globe",
+            enterVerb,
+            keepsOpen: true,
+            run: () => {
+              const idx = splitPickerContext.tabIds.indexOf(t.id);
+              if (idx === -1) {
+                splitPickerContext.tabIds.push(t.id);
+              } else {
+                splitPickerContext.tabIds.splice(idx, 1);
+              }
+              render(`split-tab-${t.id}`);
+              input.focus();
+            }
+          });
+        });
+        prefixLabel = selectedIds.length >= 2 ? `Split ${selectedIds.length} Tabs` : "Split Tabs";
       } else if (activeGroup) {
         const groupTabs = (data.tabs || [])
           .filter((t) => t.groupId === activeGroup.id)
@@ -1347,7 +1597,7 @@
 
       for (const c of CHIP_MODES) {
         const btn = chipButtons.get(c.id);
-        const isActive = !activeGroup && !groupPickerContext && !groupEditContext && !windowPickerContext && c.id === activeMode;
+        const isActive = !activeGroup && !groupPickerContext && !groupEditContext && !windowPickerContext && !splitPickerContext && c.id === activeMode;
         btn.classList.toggle("qc-chip-active", isActive);
         const count = modeCounts[c.id];
         btn.textContent = isActive && typeof count === "number" ? `${c.label} · ${count}` : c.label;
@@ -1675,6 +1925,18 @@
 
       if (e.key === "Tab") {
         e.preventDefault();
+        if (splitPickerContext) {
+          if (selected?.tabId) {
+            const idx = splitPickerContext.tabIds.indexOf(selected.tabId);
+            if (idx === -1) {
+              splitPickerContext.tabIds.push(selected.tabId);
+            } else {
+              splitPickerContext.tabIds.splice(idx, 1);
+            }
+            render(selected.id);
+          }
+          return;
+        }
         if (groupPickerContext || groupEditContext) {
           const cIdx = Core.GROUP_COLORS.indexOf(selectedGroupColor);
           const nextC = e.shiftKey
@@ -1695,9 +1957,21 @@
         return;
       }
 
+      if (mod && e.key.toLowerCase() === "l" && splitPickerContext) {
+        e.preventDefault();
+        const layouts = Core.getAvailableSplitLayouts(Math.max(2, splitPickerContext.tabIds.length));
+        if (layouts.length > 1) {
+          const curIdx = layouts.findIndex((l) => l.id === splitPickerContext.layoutId);
+          const nextIdx = (curIdx + 1) % layouts.length;
+          splitPickerContext.layoutId = layouts[nextIdx].id;
+          render(currentItems[selectedIndex]?.id);
+        }
+        return;
+      }
+
       if (e.key === "Escape") {
         e.preventDefault();
-        if (groupPickerContext || groupEditContext || windowPickerContext || activeGroup) {
+        if (groupPickerContext || groupEditContext || windowPickerContext || splitPickerContext || activeGroup) {
           exitSubMode();
           return;
         }
@@ -1705,7 +1979,7 @@
         return;
       }
 
-      if (e.key === "Backspace" && !mod && (groupPickerContext || groupEditContext || windowPickerContext || activeGroup) && !input.value) {
+      if (e.key === "Backspace" && !mod && (groupPickerContext || groupEditContext || windowPickerContext || splitPickerContext || activeGroup) && !input.value) {
         e.preventDefault();
         exitSubMode();
         return;
@@ -1779,6 +2053,25 @@
         e.preventDefault();
         selectedIndex = Math.max(0, selectedIndex - 8);
         updateSelection();
+        return;
+      }
+
+      if (e.key === "Enter" && splitPickerContext) {
+        e.preventDefault();
+        const ids = [...splitPickerContext.tabIds];
+        if (ids.length >= 2) {
+          const ok = await executeSplitTabs(ids, splitPickerContext.layoutId);
+          if (ok) closeWithMotion();
+          return;
+        }
+        if (ids.length === 1 && selected?.tabId && !ids.includes(selected.tabId)) {
+          const ok = await executeSplitTabs([...ids, selected.tabId], splitPickerContext.layoutId);
+          if (ok) closeWithMotion();
+          return;
+        }
+        if (selected?.tabId) {
+          await selected.run();
+        }
         return;
       }
 

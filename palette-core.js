@@ -865,6 +865,51 @@
         );
       }
 
+      if (activeTab?.splitViewId != null && activeTab.splitViewId !== -1) {
+        actions.push({
+          id: "act-unsplit-tab",
+          kind: "action",
+          section: "Actions",
+          title: "Unsplit Current Tab",
+          subtitle: "Separate the current native Split View into normal tabs",
+          badge: "Window",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "split",
+          enterVerb: "Unsplit",
+          priority: 9.45,
+          keepsOpen: true,
+          searchText: "unsplit current tab separate split view",
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: { action: "UNSPLIT_TAB", splitViewId: activeTab.splitViewId },
+            keepsOpen: true
+          }
+        });
+      }
+
+      if (allTabs.length >= 2) {
+        actions.push({
+          id: "act-split-tabs",
+          kind: "action",
+          section: "Actions",
+          title: "Split Tabs…",
+          subtitle: `Tile 2 or more open tabs side-by-side or in a grid (${allTabs.length} open)`,
+          badge: "Window",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "split",
+          enterVerb: "Choose",
+          priority: 9.4,
+          keepsOpen: true,
+          searchText: "split tabs tile view side by side grid multiple windows",
+          actionDescriptor: {
+            type: "OPEN_SPLIT_PICKER",
+            tabIds: activeTab?.id != null ? [activeTab.id] : []
+          }
+        });
+      }
+
       if (windows.length > 1) {
         actions.push(
           {
@@ -1630,6 +1675,101 @@
     };
   }
 
+  function getAvailableSplitLayouts(count) {
+    if (!Number.isFinite(count) || count < 2) return [];
+    if (count === 2) {
+      return [
+        { id: "native", label: "In-Window Split" },
+        { id: "cols", label: "Side by Side (Win)" },
+        { id: "rows", label: "Top & Bottom (Win)" }
+      ];
+    }
+    if (count === 3) {
+      return [
+        { id: "cols", label: "3 Columns" },
+        { id: "master-stack", label: "1 + 2 Split" }
+      ];
+    }
+    if (count === 4) {
+      return [
+        { id: "grid", label: "2×2 Grid" },
+        { id: "cols", label: "4 Columns" }
+      ];
+    }
+    return [{ id: "grid", label: "Auto Grid" }];
+  }
+
+  function distributeSpan(total, parts) {
+    const base = Math.floor(total / parts);
+    const rem = total - base * parts;
+    return Array.from({ length: parts }, (_, i) => base + (i < rem ? 1 : 0));
+  }
+
+  function computeSplitLayouts(count, bounds = {}, layoutId = "") {
+    if (!Number.isFinite(count) || count < 2) return [];
+    const left = Math.round(Number.isFinite(bounds.left) ? bounds.left : 0);
+    const top = Math.round(Number.isFinite(bounds.top) ? bounds.top : 0);
+    const width = Math.max(300, Math.round(Number.isFinite(bounds.width) ? bounds.width : 1200));
+    const height = Math.max(200, Math.round(Number.isFinite(bounds.height) ? bounds.height : 800));
+
+    const available = getAvailableSplitLayouts(count);
+    const resolvedLayout = available.some((l) => l.id === layoutId)
+      ? layoutId
+      : available[0].id;
+
+    if (resolvedLayout === "cols") {
+      const widths = distributeSpan(width, count);
+      let curX = left;
+      return widths.map((w) => {
+        const rect = { left: curX, top, width: w, height };
+        curX += w;
+        return rect;
+      });
+    }
+
+    if (resolvedLayout === "rows") {
+      const heights = distributeSpan(height, count);
+      let curY = top;
+      return heights.map((h) => {
+        const rect = { left, top: curY, width, height: h };
+        curY += h;
+        return rect;
+      });
+    }
+
+    if (resolvedLayout === "master-stack" && count === 3) {
+      const [leftW, rightW] = distributeSpan(width, 2);
+      const [topH, bottomH] = distributeSpan(height, 2);
+      return [
+        { left, top, width: leftW, height },
+        { left: left + leftW, top, width: rightW, height: topH },
+        { left: left + leftW, top: top + topH, width: rightW, height: bottomH }
+      ];
+    }
+
+    // "grid" for 4 or 5+ tabs
+    const cols = Math.ceil(Math.sqrt(count));
+    const rows = Math.ceil(count / cols);
+    const rowHeights = distributeSpan(height, rows);
+    const rects = [];
+    let curY = top;
+    let remaining = count;
+
+    for (let r = 0; r < rows; r++) {
+      const itemsInRow = r === rows - 1 ? remaining : Math.min(cols, remaining);
+      const colWidths = distributeSpan(width, itemsInRow);
+      let curX = left;
+      for (let c = 0; c < itemsInRow; c++) {
+        rects.push({ left: curX, top: curY, width: colWidths[c], height: rowHeights[r] });
+        curX += colWidths[c];
+      }
+      curY += rowHeights[r];
+      remaining -= itemsInRow;
+    }
+
+    return rects;
+  }
+
   const Core = {
     GROUP_COLOR_HEX,
     GROUP_COLORS,
@@ -1650,7 +1790,9 @@
     computeFrecencyBoost,
     analyzeTabs,
     buildStaticActions,
-    buildResults
+    buildResults,
+    getAvailableSplitLayouts,
+    computeSplitLayouts
   };
 
   if (typeof window !== "undefined") {

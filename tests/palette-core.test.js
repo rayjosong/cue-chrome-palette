@@ -678,7 +678,7 @@ test("buildResults surfaces act-consolidate-groups when groups exist and counts 
 
 test("palette.css prevents modal chrome bars from shrinking vertically when .qc-list overflows", () => {
   const css = fs.readFileSync(path.join(__dirname, "..", "palette.css"), "utf8");
-  for (const selector of [".qc-search-row", ".qc-chips", ".qc-color-bar", ".qc-footer"]) {
+  for (const selector of [".qc-search-row", ".qc-chips", ".qc-color-bar", ".qc-split-bar", ".qc-footer"]) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
     assert.ok(match, `${selector} rule should exist in palette.css`);
@@ -688,4 +688,107 @@ test("palette.css prevents modal chrome bars from shrinking vertically when .qc-
       `${selector} must set flex-shrink: 0 so overflow-x/flex layout cannot squish its vertical padding`
     );
   }
+});
+
+test("getAvailableSplitLayouts returns appropriate layout options for 2, 3, 4, and 5+ tabs", () => {
+  assert.deepEqual(Core.getAvailableSplitLayouts(1), []);
+  assert.deepEqual(
+    Core.getAvailableSplitLayouts(2).map((l) => l.id),
+    ["native", "cols", "rows"]
+  );
+  assert.deepEqual(
+    Core.getAvailableSplitLayouts(3).map((l) => l.id),
+    ["cols", "master-stack"]
+  );
+  assert.deepEqual(
+    Core.getAvailableSplitLayouts(4).map((l) => l.id),
+    ["grid", "cols"]
+  );
+  assert.deepEqual(
+    Core.getAvailableSplitLayouts(5).map((l) => l.id),
+    ["grid"]
+  );
+});
+
+test("computeSplitLayouts tiles 2, 3, 4, and 5 tabs cleanly within screen bounds", () => {
+  const bounds = { left: 100, top: 25, width: 1441, height: 901 };
+
+  // 2 tabs side-by-side (odd width distributes remainder pixel cleanly)
+  const twoCols = Core.computeSplitLayouts(2, bounds, "cols");
+  assert.deepEqual(twoCols, [
+    { left: 100, top: 25, width: 721, height: 901 },
+    { left: 821, top: 25, width: 720, height: 901 }
+  ]);
+
+  // 2 tabs top-and-bottom
+  const twoRows = Core.computeSplitLayouts(2, bounds, "rows");
+  assert.deepEqual(twoRows, [
+    { left: 100, top: 25, width: 1441, height: 451 },
+    { left: 100, top: 476, width: 1441, height: 450 }
+  ]);
+
+  // 3 tabs 1+2 master-stack
+  const threeMaster = Core.computeSplitLayouts(3, bounds, "master-stack");
+  assert.deepEqual(threeMaster, [
+    { left: 100, top: 25, width: 721, height: 901 },
+    { left: 821, top: 25, width: 720, height: 451 },
+    { left: 821, top: 476, width: 720, height: 450 }
+  ]);
+
+  // 4 tabs 2x2 grid
+  const fourGrid = Core.computeSplitLayouts(4, bounds, "grid");
+  assert.equal(fourGrid.length, 4);
+  assert.equal(fourGrid[0].width + fourGrid[1].width, bounds.width);
+  assert.equal(fourGrid[0].height + fourGrid[2].height, bounds.height);
+
+  // 5 tabs auto-grid (3 on top row, 2 filling bottom row)
+  const fiveGrid = Core.computeSplitLayouts(5, bounds, "grid");
+  assert.equal(fiveGrid.length, 5);
+  assert.equal(fiveGrid[0].width + fiveGrid[1].width + fiveGrid[2].width, bounds.width);
+  assert.equal(fiveGrid[3].width + fiveGrid[4].width, bounds.width);
+  assert.equal(fiveGrid[0].height + fiveGrid[3].height, bounds.height);
+});
+
+test("buildResults surfaces act-split-tabs when 2 or more tabs are open", () => {
+  const twoTabsData = {
+    activeTab: { id: 1, windowId: 10, title: "One", url: "https://one.com" },
+    tabs: [
+      { id: 1, windowId: 10, title: "One", url: "https://one.com", active: true },
+      { id: 2, windowId: 10, title: "Two", url: "https://two.com" }
+    ],
+    windows: [{ id: 10, tabCount: 2 }]
+  };
+  const res = Core.buildResults(twoTabsData, "> split", "all");
+  const splitAct = res.items.find((i) => i.id === "act-split-tabs");
+  assert.ok(splitAct, "act-split-tabs should appear when >= 2 tabs are open");
+  assert.deepEqual(splitAct.actionDescriptor, {
+    type: "OPEN_SPLIT_PICKER",
+    tabIds: [1]
+  });
+
+  const oneTabRes = Core.buildResults(
+    {
+      ...twoTabsData,
+      tabs: [twoTabsData.tabs[0]]
+    },
+    "> split",
+    "all"
+  );
+  assert.equal(oneTabRes.items.find((i) => i.id === "act-split-tabs"), undefined);
+
+  const splitActiveRes = Core.buildResults(
+    {
+      ...twoTabsData,
+      activeTab: { ...twoTabsData.activeTab, splitViewId: 42 }
+    },
+    "> unsplit",
+    "all"
+  );
+  const unsplitAct = splitActiveRes.items.find((i) => i.id === "act-unsplit-tab");
+  assert.ok(unsplitAct, "act-unsplit-tab should appear when activeTab has a splitViewId");
+  assert.deepEqual(unsplitAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "UNSPLIT_TAB", splitViewId: 42 },
+    keepsOpen: true
+  });
 });
