@@ -166,3 +166,36 @@ test("buildResults supports bang templates, frecency boosts, domain/duplicate ac
   assert.equal(themeRes.activeMode, "themes");
   assert.ok(themeRes.items.some((i) => i.title === "Crimson Gold — Silk Theme"));
 });
+
+test("buildResults gates Chrome themes behind the optional management permission", () => {
+  const data = {
+    activeTab: null,
+    tabs: [],
+    quickLinks: [],
+    themes: [],
+    themesPermission: false,
+    frecency: {}
+  };
+
+  // /t with the permission off shows one row that opens Options — no theme
+  // rows and no "Restore Default" row.
+  const res = Core.buildResults(data, "/t", "all");
+  assert.equal(res.activeMode, "themes");
+  assert.equal(res.items.length, 1);
+  assert.equal(res.items[0].id, "theme-enable-permission");
+  assert.equal(res.items[0].actionDescriptor.payload.action, "OPEN_OPTIONS");
+
+  // Permission on keeps the old behaviour.
+  const allowed = Core.buildResults(
+    { ...data, themesPermission: true, themes: [{ id: "t1", name: "Silk", enabled: false }] },
+    "/t",
+    "all"
+  );
+  assert.ok(allowed.items.some((i) => i.title === "Silk"));
+
+  // Permission unknown (old callers) also keeps the old behaviour.
+  const legacy = { ...data, themes: [{ id: "t1", name: "Silk", enabled: false }] };
+  delete legacy.themesPermission;
+  const legacyRes = Core.buildResults(legacy, "/t", "all");
+  assert.ok(legacyRes.items.some((i) => i.title === "Silk"));
+});

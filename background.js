@@ -198,6 +198,10 @@ async function recordUsage(itemId) {
 async function getInstalledThemes() {
   if (!chrome.management) return [];
   try {
+    // Theme switching is opt-in: `management` is an optional permission, so
+    // never touch chrome.management until the user has granted it.
+    const granted = await chrome.permissions.contains({ permissions: ["management"] });
+    if (!granted) return [];
     const all = await chrome.management.getAll().catch(() => []);
     return all
       .filter((ext) => ext.type === "theme")
@@ -251,7 +255,7 @@ function normalizeUrlForDedup(rawUrl = "") {
 async function getPaletteData(query = "") {
   await ensureMruLoaded();
 
-  const [tabs, activeTabs, quickLinks, bookmarks, historyItems, tabGroups, recentSessions, frecency, themes] = await Promise.all([
+  const [tabs, activeTabs, quickLinks, bookmarks, historyItems, tabGroups, recentSessions, frecency, themes, themesPermission] = await Promise.all([
     chrome.tabs.query({}),
     chrome.tabs.query({ active: true, currentWindow: true }),
     getQuickLinks(),
@@ -260,7 +264,8 @@ async function getPaletteData(query = "") {
     chrome.tabGroups ? chrome.tabGroups.query({}).catch(() => []) : Promise.resolve([]),
     chrome.sessions ? chrome.sessions.getRecentlyClosed({ maxResults: 15 }).catch(() => []) : Promise.resolve([]),
     getFrecency(),
-    getInstalledThemes()
+    getInstalledThemes(),
+    chrome.permissions.contains({ permissions: ["management"] }).catch(() => false)
   ]);
 
   const activeTab = activeTabs[0] || null;
@@ -344,7 +349,8 @@ async function getPaletteData(query = "") {
     bookmarks,
     history: historyItems,
     frecency,
-    themes
+    themes,
+    themesPermission
   };
 }
 
@@ -548,6 +554,12 @@ async function executeAction(payload) {
     }
     case "SWITCH_CHROME_THEME": {
       const { themeId } = payload;
+      // `management` is optional: refuse cleanly when it was never granted
+      // (or was revoked) instead of throwing inside chrome.management.
+      const themesGranted = await chrome.permissions.contains({ permissions: ["management"] }).catch(() => false);
+      if (!themesGranted) {
+        return { ok: false, error: "Theme switching is off — enable it in QuickCmd options." };
+      }
       if (themeId) {
         try {
           const ext = await chrome.management.get(themeId);

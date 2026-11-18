@@ -775,6 +775,33 @@
       });
     }
 
+    // Theme switching is opt-in (optional `management` permission). When it
+    // is off, replace every theme row with a single row that opens Options,
+    // where the permission is granted — never show theme rows we cannot act
+    // on. `themesPermission` undefined (old callers, tests) means allowed,
+    // so existing behaviour is unchanged unless explicitly false.
+    if (data.themesPermission === false) {
+      themes.length = 0;
+      themes.push({
+        id: "theme-enable-permission",
+        kind: "theme",
+        section: "Chrome Themes",
+        title: "Enable Chrome Theme Switching",
+        subtitle: "Optional permission — QuickCmd lists and switches installed Chrome themes only with your consent. Press Enter to open Options.",
+        badge: "Optional",
+        badgeClass: "qc-badge-theme",
+        iconClass: "qc-icon-theme",
+        iconName: "palette",
+        enterVerb: "Enable",
+        priority: 9,
+        searchText: "theme enable permission switch chrome theme appearance",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "OPEN_OPTIONS" }
+        }
+      });
+    }
+
     const modeCounts = {
       all: tabs.length + tabGroups.length + closedTabs.length + bookmarks.length + actions.length + chromePages.length + themes.length,
       tabs: tabs.length,

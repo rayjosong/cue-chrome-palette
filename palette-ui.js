@@ -373,6 +373,7 @@
           const keepsOpen = Boolean(descriptor.keepsOpen || item?.keepsOpen);
           if (keepsOpen) {
             if (res?.toast) showToast(res.toast);
+            else if (res?.error) showToast(res.error);
             await refreshData(currentItems[selectedIndex]?.id);
             return { closesPalette: false };
           }

@@ -87,4 +87,30 @@ saveBtn.addEventListener("click", async () => {
   }, 1800);
 });
 
+// Chrome theme switching is opt-in: `management` is an optional permission.
+// The request must run synchronously inside this click handler — awaiting
+// anything first would lose the user gesture and Chrome would reject it,
+// so the current state is cached in `themeGranted` instead of re-checked.
+const themeBtn = document.getElementById("theme-btn");
+const themeStatus = document.getElementById("theme-status");
+let themeGranted = false;
+
+async function refreshThemeState() {
+  themeGranted = await chrome.permissions.contains({ permissions: ["management"] });
+  themeBtn.textContent = themeGranted ? "Disable theme switching" : "Enable theme switching";
+  themeStatus.textContent = themeGranted
+    ? "On — QuickCmd can list and switch your installed Chrome themes."
+    : "Off — QuickCmd cannot see your installed themes.";
+}
+
+themeBtn.addEventListener("click", () => {
+  if (themeGranted) {
+    chrome.permissions.remove({ permissions: ["management"] }, () => refreshThemeState());
+  } else {
+    chrome.permissions.request({ permissions: ["management"] }, () => refreshThemeState());
+  }
+});
+
+refreshThemeState();
+
 load();

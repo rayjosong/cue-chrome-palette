@@ -11,7 +11,9 @@
     "history",
     "storage",
     "scripting",
-    "activeTab",
+    "activeTab"
+  ],
+  "optional_permissions": [
     "management"
   ],
   "content_scripts": [

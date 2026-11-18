@@ -96,6 +96,16 @@
         color: #86efac;
         margin-left: 10px;
       }
+      .theme-section {
+        margin-top: 22px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      h2 {
+        margin: 0 0 6px;
+        font-size: 15px;
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
@@ -122,6 +132,17 @@
         <div>
           <span id="status" class="status"></span>
           <button id="save-btn" class="primary">Save Changes</button>
+        </div>
+      </div>
+
+      <div class="theme-section">
+        <h2>Chrome Themes (optional)</h2>
+        <p class="sub">
+          Theme switching lists and activates your installed Chrome themes (<code>/t</code>). It needs the optional <code>management</code> permission, which can also enable or disable other extensions — so QuickCmd asks for it only if you turn this on. Everything else works without it.
+        </p>
+        <div>
+          <button id="theme-btn">Enable theme switching</button>
+          <span id="theme-status" class="status"></span>
         </div>
       </div>
     </div>
