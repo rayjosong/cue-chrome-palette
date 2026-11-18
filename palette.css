@@ -59,6 +59,26 @@
   --qc-theme-bg: rgba(217, 70, 239, 0.14);
   --qc-theme-bd: rgba(217, 70, 239, 0.24);
 
+  --qc-download-fg: #38bdf8;
+  --qc-download-bg: rgba(56, 189, 248, 0.14);
+  --qc-download-bd: rgba(56, 189, 248, 0.22);
+
+  --qc-ext-fg: #a78bfa;
+  --qc-ext-bg: rgba(167, 139, 250, 0.14);
+  --qc-ext-bd: rgba(167, 139, 250, 0.22);
+
+  --qc-playing-fg: #4ade80;
+  --qc-playing-bg: rgba(74, 222, 128, 0.16);
+  --qc-playing-bd: rgba(74, 222, 128, 0.3);
+
+  --qc-muted-fg: #f87171;
+  --qc-muted-bg: rgba(248, 113, 113, 0.16);
+  --qc-muted-bd: rgba(248, 113, 113, 0.28);
+
+  --qc-sleeping-fg: #94a3b8;
+  --qc-sleeping-bg: rgba(148, 163, 184, 0.12);
+  --qc-sleeping-bd: rgba(148, 163, 184, 0.2);
+
   color: var(--qc-text);
 }
 
@@ -117,6 +137,26 @@
     --qc-theme-fg: #a21caf;
     --qc-theme-bg: rgba(162, 28, 175, 0.1);
     --qc-theme-bd: rgba(162, 28, 175, 0.2);
+
+    --qc-download-fg: #0284c7;
+    --qc-download-bg: rgba(2, 132, 199, 0.1);
+    --qc-download-bd: rgba(2, 132, 199, 0.18);
+
+    --qc-ext-fg: #7c3aed;
+    --qc-ext-bg: rgba(124, 58, 237, 0.1);
+    --qc-ext-bd: rgba(124, 58, 237, 0.18);
+
+    --qc-playing-fg: #16a34a;
+    --qc-playing-bg: rgba(22, 163, 74, 0.12);
+    --qc-playing-bd: rgba(22, 163, 74, 0.22);
+
+    --qc-muted-fg: #dc2626;
+    --qc-muted-bg: rgba(220, 38, 38, 0.1);
+    --qc-muted-bd: rgba(220, 38, 38, 0.2);
+
+    --qc-sleeping-fg: #64748b;
+    --qc-sleeping-bg: rgba(100, 116, 139, 0.1);
+    --qc-sleeping-bd: rgba(100, 116, 139, 0.18);
   }
 }
 
@@ -486,6 +526,8 @@
 .qc-icon-bookmark { color: var(--qc-bookmark-fg); background: var(--qc-bookmark-bg); border-color: var(--qc-bookmark-bd); }
 .qc-icon-history { color: var(--qc-history-fg); background: var(--qc-history-bg); border-color: var(--qc-history-bd); }
 .qc-icon-theme { color: var(--qc-theme-fg); background: var(--qc-theme-bg); border-color: var(--qc-theme-bd); }
+.qc-icon-ext { color: var(--qc-ext-fg); background: var(--qc-ext-bg); border-color: var(--qc-ext-bd); }
+.qc-icon-download { color: var(--qc-download-fg); background: var(--qc-download-bg); border-color: var(--qc-download-bd); }
 
 .qc-item-main {
   flex: 1;
@@ -552,6 +594,11 @@
 .qc-badge.qc-badge-bookmark { color: var(--qc-bookmark-fg); background: var(--qc-bookmark-bg); border-color: var(--qc-bookmark-bd); }
 .qc-badge.qc-badge-history { color: var(--qc-history-fg); background: var(--qc-history-bg); border-color: var(--qc-history-bd); }
 .qc-badge.qc-badge-theme { color: var(--qc-theme-fg); background: var(--qc-theme-bg); border-color: var(--qc-theme-bd); }
+.qc-badge.qc-badge-ext { color: var(--qc-ext-fg); background: var(--qc-ext-bg); border-color: var(--qc-ext-bd); }
+.qc-badge.qc-badge-download { color: var(--qc-download-fg); background: var(--qc-download-bg); border-color: var(--qc-download-bd); }
+.qc-badge.qc-badge-playing { color: var(--qc-playing-fg); background: var(--qc-playing-bg); border-color: var(--qc-playing-bd); }
+.qc-badge.qc-badge-muted { color: var(--qc-muted-fg); background: var(--qc-muted-bg); border-color: var(--qc-muted-bd); }
+.qc-badge.qc-badge-sleeping { color: var(--qc-sleeping-fg); background: var(--qc-sleeping-bg); border-color: var(--qc-sleeping-bd); }
 
 .qc-enter-hint {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

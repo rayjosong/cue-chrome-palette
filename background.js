@@ -252,10 +252,55 @@ function normalizeUrlForDedup(rawUrl = "") {
   }
 }
 
+async function getInstalledExtensions() {
+  if (!chrome.management) return [];
+  try {
+    const granted = await chrome.permissions.contains({ permissions: ["management"] });
+    if (!granted) return [];
+    const all = await chrome.management.getAll().catch(() => []);
+    return all
+      .filter((ext) => ext.type === "extension" && ext.id !== chrome.runtime.id)
+      .map((ext) => ({
+        id: ext.id,
+        name: ext.name,
+        description: ext.description || "",
+        enabled: Boolean(ext.enabled),
+        optionsUrl: ext.optionsUrl || "",
+        version: ext.version || ""
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
+
+async function getRecentDownloads() {
+  if (!chrome.downloads) return [];
+  try {
+    const items = await chrome.downloads.search({ limit: 30, orderBy: ["-startTime"] }).catch(() => []);
+    return items.map((d) => {
+      const filename = d.filename || "";
+      const basename = filename.split(/[/\\]/).pop() || filename || "Download";
+      return {
+        id: d.id,
+        filename,
+        basename,
+        url: d.url || "",
+        state: d.state || "",
+        mime: d.mime || "",
+        startTime: d.startTime || "",
+        fileSize: d.fileSize || 0
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 async function getPaletteData(query = "") {
   await ensureMruLoaded();
 
-  const [tabs, activeTabs, quickLinks, bookmarks, historyItems, tabGroups, recentSessions, frecency, themes, themesPermission] = await Promise.all([
+  const [tabs, activeTabs, quickLinks, bookmarks, historyItems, tabGroups, recentSessions, frecency, themes, themesPermission, extensions, downloads, normalWindows] = await Promise.all([
     chrome.tabs.query({}),
     chrome.tabs.query({ active: true, currentWindow: true }),
     getQuickLinks(),
@@ -265,10 +310,24 @@ async function getPaletteData(query = "") {
     chrome.sessions ? chrome.sessions.getRecentlyClosed({ maxResults: 15 }).catch(() => []) : Promise.resolve([]),
     getFrecency(),
     getInstalledThemes(),
-    chrome.permissions.contains({ permissions: ["management"] }).catch(() => false)
+    chrome.permissions.contains({ permissions: ["management"] }).catch(() => false),
+    getInstalledExtensions(),
+    getRecentDownloads(),
+    chrome.windows ? chrome.windows.getAll({ populate: true, windowTypes: ["normal"] }).catch(() => []) : Promise.resolve([])
   ]);
 
   const activeTab = activeTabs[0] || null;
+
+  const windows = (normalWindows || []).map((w) => {
+    const activeInWin = (w.tabs || []).find((t) => t.active);
+    return {
+      id: w.id,
+      focused: Boolean(w.focused),
+      incognito: Boolean(w.incognito),
+      tabCount: (w.tabs || []).length,
+      title: activeInWin?.title || "Window"
+    };
+  });
 
   const groupMap = new Map();
   for (const g of tabGroups) {
@@ -297,6 +356,8 @@ async function getPaletteData(query = "") {
       active: t.active,
       currentWindow: activeTab ? t.windowId === activeTab.windowId : false,
       pinned: t.pinned,
+      audible: Boolean(t.audible),
+      discarded: Boolean(t.discarded),
       muted: Boolean(t.mutedInfo?.muted),
       lastAccessed: Math.max(t.lastAccessed || 0, mruTimestamps.get(t.id) || 0)
     };
@@ -338,6 +399,8 @@ async function getPaletteData(query = "") {
           title: activeTab.title,
           url: activeTab.url,
           pinned: activeTab.pinned,
+          audible: Boolean(activeTab.audible),
+          discarded: Boolean(activeTab.discarded),
           muted: Boolean(activeTab.mutedInfo?.muted)
         }
       : null,
@@ -350,7 +413,10 @@ async function getPaletteData(query = "") {
     history: historyItems,
     frecency,
     themes,
-    themesPermission
+    themesPermission,
+    extensions,
+    downloads,
+    windows
   };
 }
 
@@ -402,8 +468,59 @@ async function executeAction(payload) {
       await chrome.windows.create({ incognito: true });
       return { ok: true, toast: "Opened new incognito window" };
     }
+    case "MUTE_AUDIBLE_TABS": {
+      const all = await chrome.tabs.query({});
+      const audible = all.filter((t) => t.audible);
+      for (const t of audible) {
+        await chrome.tabs.update(t.id, { muted: true });
+      }
+      return {
+        ok: true,
+        mutedCount: audible.length,
+        toast: audible.length ? `Muted ${audible.length} audible ${audible.length === 1 ? "tab" : "tabs"}` : "No audible tabs found"
+      };
+    }
+    case "MUTE_OTHER_TABS": {
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const all = await chrome.tabs.query({ currentWindow: true });
+      const toMute = all.filter((t) => (!active || t.id !== active.id) && !t.mutedInfo?.muted);
+      for (const t of toMute) {
+        await chrome.tabs.update(t.id, { muted: true });
+      }
+      return {
+        ok: true,
+        mutedCount: toMute.length,
+        toast: `Muted ${toMute.length} other ${toMute.length === 1 ? "tab" : "tabs"}`
+      };
+    }
+    case "RELOAD_TAB": {
+      let targetTabId = payload.tabId;
+      if (!targetTabId) {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        targetTabId = active ? active.id : null;
+      }
+      if (!targetTabId) return { ok: false, error: "No tab to reload" };
+      await chrome.tabs.reload(targetTabId, { bypassCache: Boolean(payload.bypassCache) });
+      return { ok: true, toast: payload.bypassCache ? "Hard reloaded tab (bypass cache)" : "Reloaded tab" };
+    }
+    case "OPEN_IN_INCOGNITO": {
+      await chrome.windows.create({ url: payload.url, incognito: true });
+      return { ok: true, toast: "Opened in incognito window" };
+    }
     case "OPEN_URL": {
-      await chrome.tabs.create({ url });
+      const target = payload.target || "new";
+      if (target === "current") {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (active) {
+          await chrome.tabs.update(active.id, { url });
+        } else {
+          await chrome.tabs.create({ url });
+        }
+      } else if (target === "background") {
+        await chrome.tabs.create({ url, active: false });
+      } else {
+        await chrome.tabs.create({ url });
+      }
       return { ok: true };
     }
     case "OPEN_OPTIONS": {
@@ -581,6 +698,107 @@ async function executeAction(payload) {
           return { ok: false, error: err.message };
         }
       }
+    }
+    case "RENAME_RECOLOR_GROUP": {
+      const { groupId, title, color } = payload;
+      const updateProps = {};
+      if (title !== undefined) updateProps.title = title;
+      if (color !== undefined) updateProps.color = color;
+      await chrome.tabGroups.update(groupId, updateProps);
+      return { ok: true, toast: `Updated group "${title || "Group"}"` };
+    }
+    case "UNGROUP_ALL_IN_GROUP": {
+      const { groupId } = payload;
+      const groupTabs = await chrome.tabs.query({ groupId });
+      if (groupTabs.length) {
+        await chrome.tabs.ungroup(groupTabs.map((t) => t.id));
+      }
+      return { ok: true, toast: `Ungrouped ${groupTabs.length} tab(s)` };
+    }
+    case "CLOSE_GROUP_TABS": {
+      const { groupId } = payload;
+      const groupTabs = await chrome.tabs.query({ groupId });
+      if (groupTabs.length) {
+        await chrome.tabs.remove(groupTabs.map((t) => t.id));
+      }
+      return { ok: true, toast: `Closed ${groupTabs.length} tab(s) in group` };
+    }
+    case "MOVE_TAB_TO_WINDOW": {
+      const { tabId, targetWindowId } = payload;
+      await chrome.tabs.move(tabId, { windowId: targetWindowId, index: -1 });
+      await chrome.windows.update(targetWindowId, { focused: true });
+      await chrome.tabs.update(tabId, { active: true });
+      return { ok: true, toast: "Moved tab to window" };
+    }
+    case "MERGE_ALL_WINDOWS": {
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!active) return { ok: false, error: "No active tab" };
+      const currentWinId = active.windowId;
+      const allWindows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+      let movedCount = 0;
+      for (const win of allWindows) {
+        if (win.id !== currentWinId && Boolean(win.incognito) === Boolean(active.incognito) && Array.isArray(win.tabs)) {
+          const tabIds = win.tabs.map((t) => t.id).filter(Boolean);
+          if (tabIds.length) {
+            await chrome.tabs.move(tabIds, { windowId: currentWinId, index: -1 });
+            movedCount += tabIds.length;
+          }
+        }
+      }
+      return { ok: true, toast: `Merged ${movedCount} tab(s) into current window` };
+    }
+    case "TOGGLE_BOOKMARK": {
+      const { url, title } = payload;
+      if (!chrome.bookmarks) return { ok: false, error: "Bookmarks API unavailable" };
+      const found = await chrome.bookmarks.search({ url });
+      const matches = (found || []).filter((b) => b.url === url);
+      if (matches.length > 0) {
+        for (const b of matches) {
+          await chrome.bookmarks.remove(b.id);
+        }
+        cachedBookmarks = null;
+        return { ok: true, bookmarked: false, toast: "Removed bookmark" };
+      } else {
+        await chrome.bookmarks.create({ title: title || url, url });
+        cachedBookmarks = null;
+        return { ok: true, bookmarked: true, toast: "Bookmarked page" };
+      }
+    }
+    case "TOGGLE_EXTENSION": {
+      const mgmtGranted = await chrome.permissions.contains({ permissions: ["management"] }).catch(() => false);
+      if (!mgmtGranted || !chrome.management) {
+        return { ok: false, error: "Extension management is off — enable it in QuickCmd options." };
+      }
+      const ext = await chrome.management.get(payload.extensionId);
+      const nextState = !ext.enabled;
+      await chrome.management.setEnabled(payload.extensionId, nextState);
+      return {
+        ok: true,
+        enabled: nextState,
+        toast: `${nextState ? "Enabled" : "Disabled"} ${ext.name}`
+      };
+    }
+    case "OPEN_EXTENSION_OPTIONS": {
+      const mgmtGranted = await chrome.permissions.contains({ permissions: ["management"] }).catch(() => false);
+      if (!mgmtGranted || !chrome.management) {
+        return { ok: false, error: "Extension management is off — enable it in QuickCmd options." };
+      }
+      const ext = await chrome.management.get(payload.extensionId);
+      if (ext.optionsUrl) {
+        await chrome.tabs.create({ url: ext.optionsUrl });
+        return { ok: true };
+      }
+      return { ok: false, error: "Extension has no options page" };
+    }
+    case "OPEN_DOWNLOAD": {
+      if (!chrome.downloads) return { ok: false, error: "Downloads API unavailable" };
+      await chrome.downloads.open(payload.downloadId);
+      return { ok: true, toast: "Opened download" };
+    }
+    case "SHOW_DOWNLOAD_IN_FOLDER": {
+      if (!chrome.downloads) return { ok: false, error: "Downloads API unavailable" };
+      chrome.downloads.show(payload.downloadId);
+      return { ok: true, toast: "Showing download in folder" };
     }
     default:
       return { ok: false, error: `Unknown action: ${action}` };

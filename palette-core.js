@@ -32,7 +32,9 @@
     bookmarks: { id: "bookmarks", label: "Bookmarks", singularLabel: "bookmark", icon: "star" },
     history: { id: "history", label: "History", singularLabel: "history item", icon: "history" },
     closed: { id: "closed", label: "Closed", singularLabel: "recently closed tab", icon: "rotateCcw" },
-    themes: { id: "themes", label: "Themes", singularLabel: "Chrome theme", icon: "palette" }
+    themes: { id: "themes", label: "Themes", singularLabel: "Chrome theme", icon: "palette" },
+    extensions: { id: "extensions", label: "Extensions", singularLabel: "extension", icon: "puzzle" },
+    downloads: { id: "downloads", label: "Downloads", singularLabel: "download", icon: "download" }
   };
 
   function getModeDefinition(mode) {
@@ -86,6 +88,38 @@
     }
   }
 
+  function stripTrackingParams(rawUrl = "") {
+    if (!rawUrl || typeof rawUrl !== "string") return "";
+    try {
+      const u = new URL(rawUrl);
+      const trackingParams = new Set([
+        "fbclid", "gclid", "dclid", "msclkid",
+        "mc_cid", "mc_eid", "ref_src", "igshid",
+        "_hsenc", "_hsmi"
+      ]);
+      const keysToDelete = [];
+      for (const key of u.searchParams.keys()) {
+        const lower = key.toLowerCase();
+        if (lower.startsWith("utm_") || trackingParams.has(lower)) {
+          keysToDelete.push(key);
+        }
+      }
+      for (const k of keysToDelete) {
+        u.searchParams.delete(k);
+      }
+      return u.toString();
+    } catch {
+      return rawUrl;
+    }
+  }
+
+  function formatMarkdownLink(title = "", url = "") {
+    const safeTitle = (title || url || "")
+      .replace(/\[/g, "\\[")
+      .replace(/\]/g, "\\]");
+    return `[${safeTitle}](${url || ""})`;
+  }
+
   function extractHostname(rawUrl = "") {
     if (!rawUrl || typeof rawUrl !== "string") return "";
     try {
@@ -121,6 +155,12 @@
     }
     if (trimmed === "/t" || trimmed.startsWith("/t ")) {
       return { mode: "themes", query: trimmed.slice(2).trim(), prefixLabel: "Themes", isPrefix: true, rawPrefix: "/t" };
+    }
+    if (trimmed === "/e" || trimmed.startsWith("/e ")) {
+      return { mode: "extensions", query: trimmed.slice(2).trim(), prefixLabel: "Extensions", isPrefix: true, rawPrefix: "/e" };
+    }
+    if (trimmed === "/d" || trimmed.startsWith("/d ")) {
+      return { mode: "downloads", query: trimmed.slice(2).trim(), prefixLabel: "Downloads", isPrefix: true, rawPrefix: "/d" };
     }
     return {
       mode: chipMode || "all",
@@ -290,10 +330,115 @@
     };
   }
 
-  function buildStaticActions(activeTab, analysis) {
+  function buildStaticActions(activeTab, analysis, contextData = {}) {
+    const allTabs = Array.isArray(contextData) ? contextData : (contextData?.tabs || []);
+    const windows = Array.isArray(contextData) ? [] : (contextData?.windows || []);
+    const bookmarks = Array.isArray(contextData) ? [] : (contextData?.bookmarks || []);
     const actions = [];
+
+    const audibleTab = allTabs.find((t) => t.audible);
+    if (audibleTab) {
+      actions.push(
+        {
+          id: "act-jump-audio",
+          kind: "action",
+          section: "Actions",
+          title: "Jump to Playing Audio Tab",
+          subtitle: audibleTab.title || "Switch to playing audio tab",
+          badge: "Audio",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "volume",
+          enterVerb: "Switch",
+          priority: 14.5,
+          searchText: "jump to playing audio tab sound",
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: { action: "SWITCH_TAB", tabId: audibleTab.id, windowId: audibleTab.windowId }
+          }
+        },
+        {
+          id: "act-mute-audible",
+          kind: "action",
+          section: "Actions",
+          title: "Mute All Audible Tabs",
+          subtitle: "Mute all tabs currently playing audio",
+          badge: "Audio",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "mute",
+          enterVerb: "Mute",
+          priority: 14,
+          keepsOpen: true,
+          searchText: "mute all audible tabs sound silence",
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: { action: "MUTE_AUDIBLE_TABS" },
+            keepsOpen: true
+          }
+        }
+      );
+    }
+
+    actions.push({
+      id: "act-mute-others",
+      kind: "action",
+      section: "Actions",
+      title: "Mute All Other Tabs",
+      subtitle: "Mute all other unmuted tabs",
+      badge: "Audio",
+      badgeClass: "qc-badge-action",
+      iconClass: "qc-icon-action",
+      iconName: "mute",
+      enterVerb: "Mute",
+      priority: 10,
+      keepsOpen: true,
+      searchText: "mute all other tabs unmuted",
+      actionDescriptor: {
+        type: "EXECUTE_ACTION",
+        payload: { action: "MUTE_OTHER_TABS" },
+        keepsOpen: true
+      }
+    });
+
     if (activeTab) {
       actions.push(
+        {
+          id: "act-reload",
+          kind: "action",
+          section: "Actions",
+          title: "Reload Current Tab",
+          subtitle: activeTab.title || "Reload page",
+          badge: "Action",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "rotateCcw",
+          enterVerb: "Reload",
+          priority: 9.5,
+          searchText: "reload refresh current tab page",
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: { action: "RELOAD_TAB", tabId: activeTab.id, bypassCache: false }
+          }
+        },
+        {
+          id: "act-hard-reload",
+          kind: "action",
+          section: "Actions",
+          title: "Hard Reload Current Tab (Bypass Cache)",
+          subtitle: activeTab.title || "Reload page bypassing cache",
+          badge: "Action",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "rotateCcw",
+          enterVerb: "Hard Reload",
+          priority: 9.4,
+          searchText: "hard reload refresh bypass cache force",
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: { action: "RELOAD_TAB", tabId: activeTab.id, bypassCache: true }
+          }
+        },
         {
           id: "act-group-picker",
           kind: "action",
@@ -390,6 +535,134 @@
           actionDescriptor: { type: "COPY_TEXT", text: activeTab.url || "" }
         }
       );
+
+      if (activeTab.url && /^https?:\/\//i.test(activeTab.url)) {
+        const isBookmarked = bookmarks.some((b) => b.url === activeTab.url);
+        actions.push(
+          {
+            id: "act-toggle-bookmark",
+            kind: "action",
+            section: "Actions",
+            title: isBookmarked ? "Remove Current Page Bookmark" : "Bookmark Current Page",
+            subtitle: activeTab.url,
+            badge: "Bookmark",
+            badgeClass: "qc-badge-bookmark",
+            iconClass: "qc-icon-bookmark",
+            iconName: "star",
+            enterVerb: isBookmarked ? "Remove" : "Bookmark",
+            priority: 9.8,
+            keepsOpen: true,
+            searchText: isBookmarked
+              ? "remove bookmark unbookmark current page"
+              : "bookmark current page save star",
+            actionDescriptor: {
+              type: "EXECUTE_ACTION",
+              payload: { action: "TOGGLE_BOOKMARK", url: activeTab.url, title: activeTab.title },
+              keepsOpen: true
+            }
+          },
+          {
+            id: "act-copy-markdown",
+            kind: "action",
+            section: "Actions",
+            title: "Copy Current Page as Markdown",
+            subtitle: formatMarkdownLink(activeTab.title || activeTab.url, activeTab.url),
+            badge: "Action",
+            badgeClass: "qc-badge-action",
+            iconClass: "qc-icon-action",
+            iconName: "copy",
+            enterVerb: "Copy",
+            priority: 9.7,
+            searchText: "copy current page as markdown link md",
+            actionDescriptor: {
+              type: "COPY_TEXT",
+              text: formatMarkdownLink(activeTab.title || activeTab.url, activeTab.url),
+              toast: "Copied Markdown link to clipboard"
+            }
+          },
+          {
+            id: "act-copy-clean-url",
+            kind: "action",
+            section: "Actions",
+            title: "Copy Clean URL",
+            subtitle: stripTrackingParams(activeTab.url),
+            badge: "Action",
+            badgeClass: "qc-badge-action",
+            iconClass: "qc-icon-action",
+            iconName: "link",
+            enterVerb: "Copy",
+            priority: 9.6,
+            searchText: "copy clean url strip tracking utm params",
+            actionDescriptor: {
+              type: "COPY_TEXT",
+              text: stripTrackingParams(activeTab.url),
+              toast: "Copied clean URL to clipboard"
+            }
+          },
+          {
+            id: "act-open-incognito",
+            kind: "action",
+            section: "Actions",
+            title: "Open Current Page in Incognito",
+            subtitle: activeTab.url,
+            badge: "Incognito",
+            badgeClass: "qc-badge-action",
+            iconClass: "qc-icon-action",
+            iconName: "incognito",
+            enterVerb: "Open",
+            priority: 9.2,
+            searchText: "open current page in incognito private window",
+            actionDescriptor: {
+              type: "EXECUTE_ACTION",
+              payload: { action: "OPEN_IN_INCOGNITO", url: activeTab.url }
+            }
+          }
+        );
+      }
+
+      if (windows.length > 1) {
+        actions.push(
+          {
+            id: "act-move-window-picker",
+            kind: "action",
+            section: "Actions",
+            title: "Move Current Tab to Window…",
+            subtitle: `Select from ${windows.length - 1} other open window(s)`,
+            badge: "Window",
+            badgeClass: "qc-badge-action",
+            iconClass: "qc-icon-action",
+            iconName: "window",
+            enterVerb: "Choose",
+            priority: 9.3,
+            keepsOpen: true,
+            searchText: "move current tab to window picker",
+            actionDescriptor: {
+              type: "OPEN_WINDOW_PICKER",
+              tabId: activeTab.id
+            }
+          },
+          {
+            id: "act-merge-windows",
+            kind: "action",
+            section: "Actions",
+            title: "Merge All Windows into Current",
+            subtitle: `Combine tabs from all ${windows.length} windows into this window`,
+            badge: "Window",
+            badgeClass: "qc-badge-action",
+            iconClass: "qc-icon-action",
+            iconName: "window",
+            enterVerb: "Merge",
+            priority: 9.1,
+            keepsOpen: true,
+            searchText: "merge all windows into current combine",
+            actionDescriptor: {
+              type: "EXECUTE_ACTION",
+              payload: { action: "MERGE_ALL_WINDOWS" },
+              keepsOpen: true
+            }
+          }
+        );
+      }
     }
 
     if (analysis.activeDomain && analysis.domainCount > 1) {
@@ -556,6 +829,11 @@
       title: t.title,
       subtitle: t.url,
       favIconUrl: t.favIconUrl,
+      audible: Boolean(t.audible),
+      muted: Boolean(t.muted),
+      discarded: Boolean(t.discarded),
+      pinned: Boolean(t.pinned),
+      currentWindow: t.currentWindow,
       badge:
         t.active && t.currentWindow
           ? t.pinned
@@ -679,7 +957,7 @@
       });
     }
 
-    const actions = buildStaticActions(data.activeTab, analysis);
+    const actions = buildStaticActions(data.activeTab, analysis, data);
 
     const chromePages = (data.chromePages || []).map((p) => ({
       id: p.id,
@@ -784,11 +1062,10 @@
       });
     }
 
-    // Theme switching is opt-in (optional `management` permission). When it
-    // is off, replace every theme row with a single row that opens Options,
-    // where the permission is granted — never show theme rows we cannot act
-    // on. `themesPermission` undefined (old callers, tests) means allowed,
-    // so existing behaviour is unchanged unless explicitly false.
+    // Theme & extension management is opt-in (optional `management` permission).
+    // When it is off, replace theme rows with a single row that opens Options,
+    // and likewise for /e extensions mode. `themesPermission` undefined (old
+    // callers, tests) means allowed.
     if (data.themesPermission === false) {
       themes.length = 0;
       themes.push({
@@ -811,20 +1088,90 @@
       });
     }
 
+    const extensions =
+      data.themesPermission === false
+        ? [
+            {
+              id: "ext-enable-permission",
+              kind: "extension",
+              section: "Installed Extensions",
+              title: "Enable Extension Management",
+              subtitle: "Optional permission — QuickCmd toggles installed extensions only with your consent. Press Enter to open Options.",
+              badge: "Optional",
+              badgeClass: "qc-badge-action",
+              iconClass: "qc-icon-ext",
+              iconName: "puzzle",
+              enterVerb: "Enable",
+              priority: 9,
+              searchText: "extension enable permission manage toggle",
+              actionDescriptor: {
+                type: "EXECUTE_ACTION",
+                payload: { action: "OPEN_OPTIONS" }
+              }
+            }
+          ]
+        : (data.extensions || []).map((ext) => ({
+            id: `ext-${ext.id}`,
+            kind: "extension",
+            section: "Installed Extensions",
+            extensionId: ext.id,
+            title: ext.name,
+            subtitle: ext.description
+              ? `${ext.enabled ? "Enabled" : "Disabled"} · ${ext.description}`
+              : `${ext.enabled ? "Enabled" : "Disabled"}${ext.version ? ` · v${ext.version}` : ""}`,
+            badge: ext.enabled ? "Enabled" : "Disabled",
+            badgeClass: ext.enabled ? "qc-badge-action" : "",
+            iconClass: "qc-icon-ext",
+            iconName: "puzzle",
+            enterVerb: ext.enabled ? "Disable" : "Enable",
+            keepsOpen: true,
+            priority: ext.enabled ? 10 : 8,
+            optionsUrl: ext.optionsUrl || "",
+            searchText: `extension ${ext.name} ${ext.description || ""} ${ext.version || ""}`,
+            actionDescriptor: {
+              type: "EXECUTE_ACTION",
+              payload: { action: "TOGGLE_EXTENSION", extensionId: ext.id },
+              keepsOpen: true
+            }
+          }));
+
+    const downloads = (data.downloads || []).map((dl) => ({
+      id: `dl-${dl.id}`,
+      kind: "download",
+      section: "Recent Downloads",
+      downloadId: dl.id,
+      title: dl.basename || dl.filename || "Downloaded File",
+      subtitle: dl.filename || dl.url || "",
+      downloadUrl: dl.url || "",
+      badge: dl.state === "complete" ? "Download" : (dl.state || "Download"),
+      badgeClass: "qc-badge-download",
+      iconClass: "qc-icon-download",
+      iconName: "download",
+      enterVerb: "Open",
+      priority: 6,
+      searchText: `download ${dl.basename || ""} ${dl.filename || ""} ${dl.url || ""}`,
+      actionDescriptor: {
+        type: "EXECUTE_ACTION",
+        payload: { action: "OPEN_DOWNLOAD", downloadId: dl.id }
+      }
+    }));
+
     const modeCounts = {
-      all: tabs.length + tabGroups.length + closedTabs.length + bookmarks.length + actions.length + chromePages.length + themes.length,
+      all: tabs.length + tabGroups.length + closedTabs.length + bookmarks.length + actions.length + chromePages.length + themes.length + extensions.length + downloads.length,
       tabs: tabs.length,
       groups: tabGroups.length,
       closed: closedTabs.length,
       bookmarks: bookmarks.length,
       history: history.length,
-      commands: actions.length + chromePages.length + themes.length,
-      themes: themes.length
+      commands: actions.length + chromePages.length + themes.length + extensions.length,
+      themes: themes.length,
+      extensions: extensions.length,
+      downloads: downloads.length
     };
 
     let pool = [];
     if (mode === "commands") {
-      pool = [...actions, ...chromePages, ...themes];
+      pool = [...actions, ...chromePages, ...themes, ...extensions];
     } else if (mode === "tabs") {
       pool = tabs;
     } else if (mode === "groups") {
@@ -837,6 +1184,10 @@
       pool = history;
     } else if (mode === "themes") {
       pool = themes;
+    } else if (mode === "extensions") {
+      pool = extensions;
+    } else if (mode === "downloads") {
+      pool = downloads;
     } else if (!query) {
       const sortedActions = [...actions].sort(
         (a, b) =>
@@ -855,7 +1206,7 @@
         ...chromePages.slice(0, 3)
       ];
     } else {
-      pool = [...quickLinks, ...tabs, ...tabGroups, ...closedTabs, ...actions, ...chromePages, ...themes, ...bookmarks, ...history];
+      pool = [...quickLinks, ...tabs, ...tabGroups, ...closedTabs, ...actions, ...chromePages, ...themes, ...extensions, ...downloads, ...bookmarks, ...history];
     }
 
     for (const item of pool) {
@@ -944,6 +1295,8 @@
     looksLikeUrl,
     normalizeUrl,
     normalizeUrlForDedup,
+    stripTrackingParams,
+    formatMarkdownLink,
     extractHostname,
     parseModeAndQuery,
     fuzzyMatch,

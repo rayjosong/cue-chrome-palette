@@ -11,7 +11,8 @@
     "history",
     "storage",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "downloads"
   ],
   "optional_permissions": [
     "management"

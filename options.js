@@ -83,7 +83,7 @@ saveBtn.addEventListener("click", async () => {
       const title = (l.title || "").trim();
       let url = (l.url || "").trim();
       if (url && !/^(https?:\/\/|chrome:\/\/)/i.test(url)) {
-        url = `https://${url}`;
+        url = /^localhost\b/i.test(url) ? `http://${url}` : `https://${url}`;
       }
       const searchUrl = (l.searchUrl || "").trim();
       return { bang, title, url, searchUrl };
@@ -119,7 +119,7 @@ saveBtn.addEventListener("click", async () => {
   }, 1800);
 });
 
-// Chrome theme switching is opt-in: `management` is an optional permission.
+// Chrome theme switching & extension management is opt-in: `management` is an optional permission.
 // The request must run synchronously inside this click handler — awaiting
 // anything first would lose the user gesture and Chrome would reject it,
 // so the current state is cached in `themeGranted` instead of re-checked.
@@ -129,10 +129,10 @@ let themeGranted = false;
 
 async function refreshThemeState() {
   themeGranted = await chrome.permissions.contains({ permissions: ["management"] });
-  themeBtn.textContent = themeGranted ? "Disable theme switching" : "Enable theme switching";
+  themeBtn.textContent = themeGranted ? "Disable theme & extension management" : "Enable theme & extension management";
   themeStatus.textContent = themeGranted
-    ? "On — QuickCmd can list and switch your installed Chrome themes."
-    : "Off — QuickCmd cannot see your installed themes.";
+    ? "On — QuickCmd can list and toggle your installed Chrome themes and extensions."
+    : "Off — QuickCmd cannot see your installed themes or extensions.";
 }
 
 themeBtn.addEventListener("click", () => {

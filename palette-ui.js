@@ -144,7 +144,15 @@
         ["path", { d: "M12 5v14" }],
         ["path", { d: "M5 12h14" }]
       ],
-      check: [["polyline", { points: "20 6 9 17 4 12" }]]
+      check: [["polyline", { points: "20 6 9 17 4 12" }]],
+      puzzle: [
+        ["path", { d: "M15 4a2 2 0 0 1 2 2v1h1a2 2 0 0 1 2 2v2a2 2 0 1 0 0 4v2a2 2 0 0 1-2 2h-1v1a2 2 0 0 1-2 2h-2a2 2 0 1 0-4 0H7a2 2 0 0 1-2-2v-1H4a2 2 0 0 1-2-2v-2a2 2 0 1 0 0-4V9a2 2 0 0 1 2-2h1V6a2 2 0 0 1 2-2h2a2 2 0 1 0 4 0h2z" }]
+      ],
+      download: [
+        ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }],
+        ["polyline", { points: "7 10 12 15 17 10" }],
+        ["line", { x1: "12", y1: "15", x2: "12", y2: "3" }]
+      ]
     };
 
     for (const [tag, attrs] of paths[name] || paths.globe) {
@@ -231,6 +239,8 @@
     let chipMode = "all";
     let activeGroup = null;
     let groupPickerContext = null; // { tabIds: number[], defaultTitle: string, domain?: string }
+    let groupEditContext = null; // { groupId: number, title: string, color: string }
+    let windowPickerContext = null; // { tabId: number }
     let selectedGroupColor = "blue";
 
     const chipsBar = document.createElement("div");
@@ -244,6 +254,8 @@
       btn.addEventListener("click", () => {
         activeGroup = null;
         groupPickerContext = null;
+        groupEditContext = null;
+        windowPickerContext = null;
         input.placeholder = defaultPlaceholder;
         chipMode = c.id;
         selectedIndex = 0;
@@ -304,6 +316,9 @@
       bookmarks: [],
       history: [],
       themes: [],
+      extensions: [],
+      downloads: [],
+      windows: [],
       frecency: {},
       activeTab: null
     };
@@ -327,7 +342,7 @@
 
     function recordItemUsage(item) {
       if (!item) return;
-      if (item.kind === "action" || item.kind === "bang" || item.kind === "bookmark" || item.kind === "chrome" || item.kind === "theme") {
+      if (item.kind === "action" || item.kind === "bang" || item.kind === "bookmark" || item.kind === "chrome" || item.kind === "theme" || item.kind === "extension" || item.kind === "download") {
         const usageId = item.frecencyId || item.id;
         sendRuntimeMessage({ type: "RECORD_USAGE", itemId: usageId }).then((res) => {
           if (res?.ok && res.frecency) {
@@ -341,8 +356,54 @@
       if (!tabIds || !tabIds.length) return;
       activeGroup = null;
       groupPickerContext = { tabIds, defaultTitle, domain };
+      groupEditContext = null;
+      windowPickerContext = null;
       input.value = "";
       input.placeholder = `Filter existing groups or type a name (default: "${defaultTitle}")…`;
+      selectedIndex = 0;
+      render();
+      input.focus();
+    }
+
+    function openGroupEditor(group) {
+      if (!group) return;
+      activeGroup = null;
+      groupPickerContext = null;
+      windowPickerContext = null;
+      let colorName = "blue";
+      const dataGroup = (data.tabGroups || []).find((g) => g.id === group.groupId);
+      if (dataGroup && dataGroup.color) {
+        colorName = dataGroup.color;
+      } else if (group.groupColor) {
+        for (const [name, hex] of Object.entries(Core.GROUP_COLOR_HEX)) {
+          if (hex.toLowerCase() === group.groupColor.toLowerCase() || name.toLowerCase() === group.groupColor.toLowerCase()) {
+            colorName = name;
+            break;
+          }
+        }
+      }
+      selectedGroupColor = colorName;
+      groupEditContext = {
+        groupId: group.groupId,
+        title: group.groupTitle || dataGroup?.title || "",
+        color: colorName
+      };
+      input.value = groupEditContext.title;
+      input.placeholder = "Enter group title (Enter to save, Esc to cancel)…";
+      selectedIndex = 0;
+      render();
+      input.focus();
+      input.select();
+    }
+
+    function openWindowPicker({ tabId }) {
+      if (!tabId) return;
+      activeGroup = null;
+      groupPickerContext = null;
+      groupEditContext = null;
+      windowPickerContext = { tabId };
+      input.value = "";
+      input.placeholder = "Select target window to move tab…";
       selectedIndex = 0;
       render();
       input.focus();
@@ -351,6 +412,8 @@
     function exitSubMode() {
       activeGroup = null;
       groupPickerContext = null;
+      groupEditContext = null;
+      windowPickerContext = null;
       input.value = "";
       input.placeholder = defaultPlaceholder;
       selectedIndex = 0;
@@ -371,8 +434,15 @@
           });
           return { closesPalette: false };
         }
+        case "OPEN_WINDOW_PICKER": {
+          openWindowPicker({ tabId: descriptor.tabId });
+          return { closesPalette: false };
+        }
         case "DRILL_GROUP": {
           activeGroup = descriptor.group;
+          groupPickerContext = null;
+          groupEditContext = null;
+          windowPickerContext = null;
           input.value = "";
           selectedIndex = 0;
           render();
@@ -381,6 +451,8 @@
         case "ENTER_MODE": {
           activeGroup = null;
           groupPickerContext = null;
+          groupEditContext = null;
+          windowPickerContext = null;
           chipMode = "all";
           input.value = descriptor.prefix || "";
           selectedIndex = 0;
@@ -390,7 +462,8 @@
         }
         case "COPY_TEXT": {
           const ok = await copyToClipboard(descriptor.text || "");
-          showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
+          showToast(ok ? (descriptor.toast || "Copied URL to clipboard") : "Failed to copy");
+          input.focus();
           return { closesPalette: false };
         }
         case "EXECUTE_ACTION": {
@@ -415,6 +488,7 @@
         item.keepsOpen ||
           item.actionDescriptor?.keepsOpen ||
           item.actionDescriptor?.type === "OPEN_GROUP_PICKER" ||
+          item.actionDescriptor?.type === "OPEN_WINDOW_PICKER" ||
           item.actionDescriptor?.type === "DRILL_GROUP" ||
           item.actionDescriptor?.type === "ENTER_MODE" ||
           item.actionDescriptor?.type === "COPY_TEXT"
@@ -434,6 +508,7 @@
       if (item.kind === "tab") {
         const tabDomain = Core.extractHostname(item.subtitle || "");
         const tabAnalysis = Core.analyzeTabs(data.tabs || [], { url: item.subtitle || "" });
+        const isBookmarked = (data.bookmarks || []).some((b) => b.url === item.subtitle);
         list.push(
           {
             title: "Switch to Tab",
@@ -441,6 +516,34 @@
             closesPalette: true,
             run: () => item.run()
           },
+          {
+            title: "Reload Tab",
+            iconName: "rotateCcw",
+            closesPalette: false,
+            run: async () => {
+              const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "RELOAD_TAB", tabId: item.tabId, bypassCache: false } });
+              if (res?.toast) showToast(res.toast);
+            }
+          },
+          {
+            title: "Hard Reload Tab",
+            iconName: "rotateCcw",
+            closesPalette: false,
+            run: async () => {
+              const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "RELOAD_TAB", tabId: item.tabId, bypassCache: true } });
+              if (res?.toast) showToast(res.toast);
+            }
+          }
+        );
+        if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
+          list.push({
+            title: "Open in Incognito",
+            iconName: "incognito",
+            closesPalette: true,
+            run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "OPEN_IN_INCOGNITO", url: item.subtitle } })
+          });
+        }
+        list.push(
           {
             title: `Add / Move Tab to Group… (${modSymbol}G)`,
             iconName: "layers",
@@ -478,17 +581,65 @@
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "DUPLICATE_TAB", tabId: item.tabId } });
               if (res?.toast) showToast(res.toast);
             }
-          },
-          {
-            title: "Copy Tab URL",
-            iconName: "link",
-            closesPalette: false,
-            run: async () => {
-              const ok = await copyToClipboard(item.subtitle || "");
-              showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
-            }
           }
         );
+        if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
+          list.push({
+            title: isBookmarked ? "Remove Bookmark" : "Bookmark Tab",
+            iconName: "star",
+            closesPalette: false,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "TOGGLE_BOOKMARK", url: item.subtitle, title: item.title }
+              });
+              if (res?.toast) showToast(res.toast);
+              await refreshData();
+            }
+          });
+        }
+        if ((data.windows || []).length > 1) {
+          list.push({
+            title: "Move Tab to Window…",
+            iconName: "window",
+            closesPalette: false,
+            run: () => openWindowPicker({ tabId: item.tabId })
+          });
+        }
+        list.push({
+          title: "Copy Tab URL",
+          iconName: "link",
+          closesPalette: false,
+          run: async () => {
+            const ok = await copyToClipboard(item.subtitle || "");
+            showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
+            input.focus();
+          }
+        });
+        if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
+          list.push(
+            {
+              title: "Copy as Markdown",
+              iconName: "copy",
+              closesPalette: false,
+              run: async () => {
+                const ok = await copyToClipboard(Core.formatMarkdownLink(item.title, item.subtitle));
+                showToast(ok ? "Copied Markdown link to clipboard" : "Failed to copy");
+                input.focus();
+              }
+            },
+            {
+              title: "Copy Clean URL",
+              iconName: "link",
+              closesPalette: false,
+              run: async () => {
+                const ok = await copyToClipboard(Core.stripTrackingParams(item.subtitle));
+                showToast(ok ? "Copied clean URL to clipboard" : "Failed to copy");
+                input.focus();
+              }
+            }
+          );
+        }
         if (tabDomain && tabAnalysis.domainCount > 1) {
           list.push(
             {
@@ -546,6 +697,12 @@
             run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "FOCUS_GROUP", groupId: item.groupId } })
           },
           {
+            title: "Rename / Recolor Group…",
+            iconName: "palette",
+            closesPalette: false,
+            run: () => openGroupEditor(item)
+          },
+          {
             title: item.groupCollapsed ? "Expand Group" : "Collapse Group",
             iconName: "layers",
             closesPalette: false,
@@ -553,8 +710,83 @@
               await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "TOGGLE_GROUP_COLLAPSE", groupId: item.groupId } });
               showToast(item.groupCollapsed ? "Expanded group" : "Collapsed group");
             }
+          },
+          {
+            title: "Ungroup All Tabs",
+            iconName: "layers",
+            closesPalette: false,
+            run: async () => {
+              const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "UNGROUP_ALL_IN_GROUP", groupId: item.groupId } });
+              if (res?.toast) showToast(res.toast);
+              await refreshData();
+            }
+          },
+          {
+            title: "Close All Tabs in Group",
+            iconName: "x",
+            closesPalette: false,
+            run: async () => {
+              const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_GROUP_TABS", groupId: item.groupId } });
+              if (res?.toast) showToast(res.toast);
+              await refreshData();
+            }
           }
         );
+      } else if (item.kind === "extension") {
+        list.push({
+          title: item.enterVerb || "Toggle Extension",
+          iconName: "puzzle",
+          closesPalette: false,
+          run: () => item.run()
+        });
+        if (item.optionsUrl) {
+          list.push({
+            title: "Open Extension Options",
+            iconName: "settings",
+            closesPalette: true,
+            run: () => sendRuntimeMessage({
+              type: "EXECUTE_ACTION",
+              payload: { action: "OPEN_EXTENSION_OPTIONS", extensionId: item.extensionId }
+            })
+          });
+        }
+      } else if (item.kind === "download") {
+        list.push(
+          {
+            title: "Open Download",
+            iconName: "download",
+            closesPalette: true,
+            run: () => sendRuntimeMessage({
+              type: "EXECUTE_ACTION",
+              payload: { action: "OPEN_DOWNLOAD", downloadId: item.downloadId }
+            })
+          },
+          {
+            title: "Show in Folder",
+            iconName: "window",
+            closesPalette: false,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "SHOW_DOWNLOAD_IN_FOLDER", downloadId: item.downloadId }
+              });
+              if (res?.toast) showToast(res.toast);
+            }
+          }
+        );
+        if (item.downloadUrl || (item.subtitle && /^https?:\/\//i.test(item.subtitle))) {
+          const dUrl = item.downloadUrl || item.subtitle;
+          list.push({
+            title: "Copy Download URL",
+            iconName: "link",
+            closesPalette: false,
+            run: async () => {
+              const ok = await copyToClipboard(dUrl);
+              showToast(ok ? "Copied Download URL to clipboard" : "Failed to copy");
+              input.focus();
+            }
+          });
+        }
       } else {
         list.push({
           title: item.enterVerb || "Open",
@@ -563,15 +795,38 @@
           run: () => item.run()
         });
         if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
-          list.push({
-            title: "Copy URL",
-            iconName: "link",
-            closesPalette: false,
-            run: async () => {
-              const ok = await copyToClipboard(item.subtitle || "");
-              showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
+          list.push(
+            {
+              title: "Copy URL",
+              iconName: "link",
+              closesPalette: false,
+              run: async () => {
+                const ok = await copyToClipboard(item.subtitle || "");
+                showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
+                input.focus();
+              }
+            },
+            {
+              title: "Copy as Markdown",
+              iconName: "copy",
+              closesPalette: false,
+              run: async () => {
+                const ok = await copyToClipboard(Core.formatMarkdownLink(item.title, item.subtitle));
+                showToast(ok ? "Copied Markdown link to clipboard" : "Failed to copy");
+                input.focus();
+              }
+            },
+            {
+              title: "Copy Clean URL",
+              iconName: "link",
+              closesPalette: false,
+              run: async () => {
+                const ok = await copyToClipboard(Core.stripTrackingParams(item.subtitle));
+                showToast(ok ? "Copied clean URL to clipboard" : "Failed to copy");
+                input.focus();
+              }
             }
-          });
+          );
         }
       }
       return list;
@@ -662,6 +917,17 @@
           ["⇥", "Cycle Color"],
           ["Esc", "Cancel"]
         ];
+      } else if (groupEditContext) {
+        specs = [
+          ["↵", "Save Group"],
+          ["⇥", "Cycle Color"],
+          ["Esc", "Cancel"]
+        ];
+      } else if (windowPickerContext) {
+        specs = [
+          ["↵", "Move to Window"],
+          ["Esc", "Cancel"]
+        ];
       } else if (selected) {
         if (selected.kind === "tab") {
           specs = [
@@ -671,6 +937,12 @@
             [`${modSymbol}P`, "Pin"],
             [`${modSymbol}M`, "Mute"],
             [`${modSymbol}D`, "Dup"]
+          ];
+        } else if (selected.actionDescriptor?.payload?.action === "OPEN_URL") {
+          specs = [
+            ["↵", selected.enterVerb || "Open"],
+            ["⇧↵", "Current"],
+            [`${modSymbol}↵`, "Bg Tab"]
           ];
         } else {
           specs = [["↵", selected.enterVerb || "Open"]];
@@ -688,7 +960,7 @@
     }
 
     function renderColorBar() {
-      if (!groupPickerContext) {
+      if (!groupPickerContext && !groupEditContext) {
         colorBar.style.display = "none";
         colorBar.textContent = "";
         return;
@@ -697,7 +969,7 @@
       colorBar.textContent = "";
       const label = document.createElement("span");
       label.className = "qc-color-bar-label";
-      label.textContent = "New group color (Tab to cycle):";
+      label.textContent = groupEditContext ? "Group color (Tab to cycle):" : "New group color (Tab to cycle):";
       colorBar.appendChild(label);
 
       const swatches = document.createElement("div");
@@ -813,6 +1085,80 @@
         prefixLabel = groupPickerContext.domain
           ? `Group ${groupPickerContext.domain} (${groupPickerContext.tabIds.length})`
           : `Group ${groupPickerContext.tabIds.length === 1 ? "Tab" : `${groupPickerContext.tabIds.length} Tabs`}`;
+      } else if (groupEditContext) {
+        const newTitle = input.value.trim() || groupEditContext.title || "Untitled";
+        const colorHex = Core.GROUP_COLOR_HEX[selectedGroupColor] || Core.GROUP_COLOR_HEX.blue;
+        currentItems = [
+          hydrateItem({
+            id: "grp-edit-save",
+            kind: "group-save",
+            section: "Save Tab Group Changes",
+            title: `Save as "${newTitle}"`,
+            subtitle: `Color: ${selectedGroupColor} · Press Enter to save, Tab to cycle colors`,
+            badge: selectedGroupColor,
+            badgeClass: "",
+            iconClass: "",
+            customColor: colorHex,
+            iconName: "check",
+            enterVerb: "Save",
+            keepsOpen: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: {
+                  action: "RENAME_RECOLOR_GROUP",
+                  groupId: groupEditContext.groupId,
+                  title: input.value.trim() || groupEditContext.title || "Untitled",
+                  color: selectedGroupColor
+                }
+              });
+              groupEditContext = null;
+              input.value = "";
+              input.placeholder = defaultPlaceholder;
+              if (res?.toast) showToast(res.toast);
+              await refreshData();
+            }
+          })
+        ];
+        prefixLabel = "Edit Group";
+      } else if (windowPickerContext) {
+        const movingTab = (data.tabs || []).find((t) => t.id === windowPickerContext.tabId);
+        const currentWinId = movingTab ? movingTab.windowId : data.activeTab?.windowId;
+        const targetWindows = (data.windows || []).filter((w) => w.id !== currentWinId);
+        const filtered = cleanQuery
+          ? targetWindows.filter((w) => Core.fuzzyMatch(`${w.title} Window ${w.id}`, cleanQuery).score > 0)
+          : targetWindows;
+        currentItems = filtered.map((w) =>
+          hydrateItem({
+            id: `win-move-${w.id}`,
+            kind: "window-target",
+            section: "Open Windows",
+            title: w.title || `Window ${w.id}`,
+            subtitle: `Window ID: ${w.id} · ${w.tabCount} ${w.tabCount === 1 ? "tab" : "tabs"}${w.incognito ? " · Incognito" : ""}`,
+            badge: `${w.tabCount} ${w.tabCount === 1 ? "tab" : "tabs"}`,
+            badgeClass: "qc-badge-action",
+            iconClass: "qc-icon-action",
+            iconName: "window",
+            enterVerb: "Move",
+            keepsOpen: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: {
+                  action: "MOVE_TAB_TO_WINDOW",
+                  tabId: windowPickerContext.tabId,
+                  targetWindowId: w.id
+                }
+              });
+              windowPickerContext = null;
+              input.value = "";
+              input.placeholder = defaultPlaceholder;
+              if (res?.toast) showToast(res.toast);
+              await refreshData();
+            }
+          })
+        );
+        prefixLabel = "Move to Window";
       } else if (activeGroup) {
         const groupTabs = (data.tabs || [])
           .filter((t) => t.groupId === activeGroup.id)
@@ -862,7 +1208,7 @@
 
       for (const c of CHIP_MODES) {
         const btn = chipButtons.get(c.id);
-        const isActive = !activeGroup && !groupPickerContext && c.id === activeMode;
+        const isActive = !activeGroup && !groupPickerContext && !groupEditContext && !windowPickerContext && c.id === activeMode;
         btn.classList.toggle("qc-chip-active", isActive);
         const count = modeCounts[c.id];
         btn.textContent = isActive && typeof count === "number" ? `${c.label} · ${count}` : c.label;
@@ -921,7 +1267,7 @@
             allBtn.addEventListener("click", () => {
               chipMode = "all";
               const raw = input.value.trimStart();
-              if (/^(>|@|\*|\/[hgct](\s|$))/.test(raw)) {
+              if (/^(>|@|\*|\/[hgcted](\s|$))/.test(raw)) {
                 input.value = cleanQuery;
               }
               selectedIndex = 0;
@@ -983,12 +1329,13 @@
         const title = document.createElement("div");
         title.className = "qc-item-title";
         title.title = item.title || "";
-        renderHighlightedText(title, item.title, groupPickerContext ? "" : cleanQuery);
+        const hlQuery = groupPickerContext || groupEditContext ? "" : cleanQuery;
+        renderHighlightedText(title, item.title, hlQuery);
 
         const sub = document.createElement("div");
         sub.className = "qc-item-sub";
         sub.title = item.subtitle || "";
-        renderHighlightedText(sub, item.subtitle || "", groupPickerContext ? "" : cleanQuery);
+        renderHighlightedText(sub, item.subtitle || "", hlQuery);
         main.append(title, sub);
 
         const meta = document.createElement("div");
@@ -1009,6 +1356,26 @@
           }
           badge.textContent = item.badge;
           meta.appendChild(badge);
+        }
+        if (item.kind === "tab") {
+          if (item.audible) {
+            const aBadge = document.createElement("span");
+            aBadge.className = "qc-badge qc-badge-playing";
+            aBadge.textContent = "Playing";
+            meta.appendChild(aBadge);
+          }
+          if (item.muted) {
+            const mBadge = document.createElement("span");
+            mBadge.className = "qc-badge qc-badge-muted";
+            mBadge.textContent = "Muted";
+            meta.appendChild(mBadge);
+          }
+          if (item.discarded) {
+            const dBadge = document.createElement("span");
+            dBadge.className = "qc-badge qc-badge-sleeping";
+            dBadge.textContent = "Sleeping";
+            meta.appendChild(dBadge);
+          }
         }
 
         const enterHint = document.createElement("span");
@@ -1162,7 +1529,7 @@
 
       if (e.key === "Tab") {
         e.preventDefault();
-        if (groupPickerContext) {
+        if (groupPickerContext || groupEditContext) {
           const cIdx = Core.GROUP_COLORS.indexOf(selectedGroupColor);
           const nextC = e.shiftKey
             ? (cIdx - 1 + Core.GROUP_COLORS.length) % Core.GROUP_COLORS.length
@@ -1184,7 +1551,7 @@
 
       if (e.key === "Escape") {
         e.preventDefault();
-        if (groupPickerContext || activeGroup) {
+        if (groupPickerContext || groupEditContext || windowPickerContext || activeGroup) {
           exitSubMode();
           return;
         }
@@ -1192,7 +1559,7 @@
         return;
       }
 
-      if (e.key === "Backspace" && !mod && (groupPickerContext || activeGroup) && !input.value) {
+      if (e.key === "Backspace" && !mod && (groupPickerContext || groupEditContext || windowPickerContext || activeGroup) && !input.value) {
         e.preventDefault();
         exitSubMode();
         return;
@@ -1207,7 +1574,9 @@
           trimmed === "/h" ||
           trimmed === "/g" ||
           trimmed === "/c" ||
-          trimmed === "/t"
+          trimmed === "/t" ||
+          trimmed === "/e" ||
+          trimmed === "/d"
         ) {
           e.preventDefault();
           input.value = "";
@@ -1269,6 +1638,33 @@
 
       if (e.key === "Enter" && selected) {
         e.preventDefault();
+        const isOpenUrl = selected.actionDescriptor?.payload?.action === "OPEN_URL";
+        if (isOpenUrl) {
+          if (e.shiftKey) {
+            recordItemUsage(selected);
+            await sendRuntimeMessage({
+              type: "EXECUTE_ACTION",
+              payload: {
+                ...selected.actionDescriptor.payload,
+                target: "current"
+              }
+            });
+            closeWithMotion();
+            return;
+          }
+          if (mod) {
+            recordItemUsage(selected);
+            await sendRuntimeMessage({
+              type: "EXECUTE_ACTION",
+              payload: {
+                ...selected.actionDescriptor.payload,
+                target: "background"
+              }
+            });
+            showToast("Opened in background tab");
+            return;
+          }
+        }
         await selected.run();
         if (!selected.keepsOpen) closeWithMotion();
         return;

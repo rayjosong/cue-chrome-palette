@@ -5,7 +5,7 @@ const Core = require("../palette-core.js");
 test("Mode definitions and getModeDefinition cover all modes without falling back to All", () => {
   assert.equal(Core.getModeDefinition("tabs").label, "Tabs");
   assert.equal(Core.getModeDefinition("unknown").label, "All");
-  for (const mode of ["all", "tabs", "groups", "commands", "bookmarks", "history", "closed", "themes"]) {
+  for (const mode of ["all", "tabs", "groups", "commands", "bookmarks", "history", "closed", "themes", "extensions", "downloads"]) {
     const def = Core.getModeDefinition(mode);
     assert.ok(def);
     assert.equal(def.id, mode);
@@ -13,6 +13,163 @@ test("Mode definitions and getModeDefinition cover all modes without falling bac
       assert.notEqual(def.label, "All");
     }
   }
+});
+
+test("parseModeAndQuery handles /e (extensions) and /d (downloads) prefixes", () => {
+  assert.deepEqual(Core.parseModeAndQuery("/e ublock"), {
+    mode: "extensions",
+    query: "ublock",
+    prefixLabel: "Extensions",
+    isPrefix: true,
+    rawPrefix: "/e"
+  });
+  assert.deepEqual(Core.parseModeAndQuery("/d report.pdf"), {
+    mode: "downloads",
+    query: "report.pdf",
+    prefixLabel: "Downloads",
+    isPrefix: true,
+    rawPrefix: "/d"
+  });
+});
+
+test("stripTrackingParams removes marketing/analytics query parameters while preserving content queries", () => {
+  const dirty = "https://example.com/article?utm_source=twitter&utm_medium=social&utm_campaign=launch&id=42&fbclid=abc123xyz&ref=rss&gclid=test";
+  const clean = Core.stripTrackingParams(dirty);
+  assert.equal(clean, "https://example.com/article?id=42&ref=rss");
+
+  const searchUrl = "https://www.google.com/search?q=open+source&oq=open+source&utm_term=test";
+  assert.equal(Core.stripTrackingParams(searchUrl), "https://www.google.com/search?q=open+source&oq=open+source");
+
+  // Handles URLs without params or invalid URLs gracefully
+  assert.equal(Core.stripTrackingParams("https://example.com"), "https://example.com/");
+  assert.equal(Core.stripTrackingParams("not-a-url"), "not-a-url");
+});
+
+test("formatMarkdownLink formats title and URL, escaping square brackets in title", () => {
+  assert.equal(
+    Core.formatMarkdownLink("GitHub Dashboard", "https://github.com"),
+    "[GitHub Dashboard](https://github.com)"
+  );
+  assert.equal(
+    Core.formatMarkdownLink("Fix: [Bug] in Parser", "https://github.com/issues/1"),
+    "[Fix: \\[Bug\\] in Parser](https://github.com/issues/1)"
+  );
+  assert.equal(
+    Core.formatMarkdownLink("", "https://example.com"),
+    "[https://example.com](https://example.com)"
+  );
+});
+
+test("buildStaticActions creates audio, reload, bookmark, incognito, copy, and window management actions", () => {
+  const activeTab = {
+    id: 1,
+    title: "Example Domain",
+    url: "https://example.com/page?utm_source=news",
+    groupId: -1
+  };
+  const tabs = [
+    activeTab,
+    { id: 2, title: "Music Stream", url: "https://music.youtube.com", audible: true, muted: false },
+    { id: 3, title: "Video Player", url: "https://vimeo.com", audible: false, muted: false }
+  ];
+  const windows = [
+    { id: 10, focused: true, tabCount: 3, title: "Example Domain" },
+    { id: 20, focused: false, tabCount: 5, title: "Docs Window" }
+  ];
+  const bookmarks = [
+    { id: "b1", title: "Example Domain", url: "https://example.com/page?utm_source=news" }
+  ];
+
+  const analysis = Core.analyzeTabs(tabs, activeTab);
+  const actions = Core.buildStaticActions(activeTab, analysis, { tabs, windows, bookmarks });
+
+  // Audio actions
+  const jumpAudio = actions.find((a) => a.id === "act-jump-audio");
+  assert.ok(jumpAudio, "Should have jump to audio action when audible tab exists");
+  assert.equal(jumpAudio.actionDescriptor.payload.tabId, 2);
+
+  const muteAudible = actions.find((a) => a.id === "act-mute-audible");
+  assert.ok(muteAudible, "Should have mute all audible tabs action");
+  assert.equal(muteAudible.actionDescriptor.payload.action, "MUTE_AUDIBLE_TABS");
+
+  const muteOthers = actions.find((a) => a.id === "act-mute-others");
+  assert.ok(muteOthers, "Should have mute other tabs action");
+  assert.equal(muteOthers.actionDescriptor.payload.action, "MUTE_OTHER_TABS");
+
+  // Reload & Hard Reload
+  const reload = actions.find((a) => a.id === "act-reload");
+  assert.ok(reload, "Should have reload tab action");
+  assert.equal(reload.actionDescriptor.payload.action, "RELOAD_TAB");
+  const hardReload = actions.find((a) => a.id === "act-hard-reload");
+  assert.ok(hardReload, "Should have hard reload tab action");
+  assert.equal(hardReload.actionDescriptor.payload.bypassCache, true);
+
+  // Bookmark toggle (page is bookmarked -> action is "Remove Current Page Bookmark")
+  const removeBookmark = actions.find((a) => a.id === "act-toggle-bookmark");
+  assert.ok(removeBookmark);
+  assert.equal(removeBookmark.title, "Remove Current Page Bookmark");
+  assert.equal(removeBookmark.actionDescriptor.payload.action, "TOGGLE_BOOKMARK");
+
+  // Incognito
+  const incognito = actions.find((a) => a.id === "act-open-incognito");
+  assert.ok(incognito);
+  assert.equal(incognito.actionDescriptor.payload.action, "OPEN_IN_INCOGNITO");
+
+  // Copy Markdown and Clean URL
+  const copyMd = actions.find((a) => a.id === "act-copy-markdown");
+  assert.ok(copyMd);
+  assert.equal(copyMd.actionDescriptor.text, "[Example Domain](https://example.com/page?utm_source=news)");
+
+  const copyClean = actions.find((a) => a.id === "act-copy-clean-url");
+  assert.ok(copyClean);
+  assert.equal(copyClean.actionDescriptor.text, "https://example.com/page");
+
+  // Multi-window actions (>1 window)
+  const moveWindow = actions.find((a) => a.id === "act-move-window-picker");
+  assert.ok(moveWindow, "Should offer move tab to window when >1 window open");
+  const mergeWindows = actions.find((a) => a.id === "act-merge-windows");
+  assert.ok(mergeWindows, "Should offer merge all windows when >1 window open");
+});
+
+test("buildResults produces extension and download items with appropriate badges and descriptors", () => {
+  const data = {
+    activeTab: { id: 1, title: "Test", url: "https://example.com" },
+    tabs: [
+      { id: 1, title: "Test", url: "https://example.com", audible: true, discarded: false }
+    ],
+    extensions: [
+      { id: "ext1", name: "uBlock Origin", enabled: true, version: "1.50.0", optionsUrl: "chrome://extensions/?options=ext1" },
+      { id: "ext2", name: "Dark Reader", enabled: false, version: "4.9.0" }
+    ],
+    downloads: [
+      { id: 101, filename: "/home/user/Downloads/spec.pdf", basename: "spec.pdf", url: "https://example.com/spec.pdf", fileSize: 2048576, state: "complete", exists: true }
+    ]
+  };
+
+  // Check tab audio / discarded properties in results
+  const tabRes = Core.buildResults(data, "", "tabs");
+  assert.equal(tabRes.items[0].audible, true);
+  assert.equal(tabRes.items[0].discarded, false);
+
+  // Extensions mode (/e)
+  const extRes = Core.buildResults(data, "/e ublock", "all");
+  assert.equal(extRes.activeMode, "extensions");
+  assert.equal(extRes.items.length, 1);
+  assert.equal(extRes.items[0].title, "uBlock Origin");
+  assert.equal(extRes.items[0].badge, "Enabled");
+  assert.equal(extRes.items[0].actionDescriptor.payload.action, "TOGGLE_EXTENSION");
+
+  // Downloads mode (/d)
+  const dlRes = Core.buildResults(data, "/d spec", "all");
+  assert.equal(dlRes.activeMode, "downloads");
+  assert.equal(dlRes.items.length, 1);
+  assert.equal(dlRes.items[0].title, "spec.pdf");
+  assert.equal(dlRes.items[0].badge, "Download");
+  assert.equal(dlRes.items[0].actionDescriptor.payload.action, "OPEN_DOWNLOAD");
+
+  // Mode counts
+  assert.equal(extRes.modeCounts.extensions, 2);
+  assert.equal(extRes.modeCounts.downloads, 1);
 });
 
 test("parseModeAndQuery handles all chips and prefixes (with or without trailing space)", () => {
@@ -274,4 +431,12 @@ test("searchUrl with multiple {query} placeholders replaces all occurrences", ()
   const res = Core.buildResults(data, "multi hello world", "all");
   assert.equal(res.items[0].id, "bang-search-multi");
   assert.equal(res.items[0].subtitle, "https://example.com/search?q=hello%20world&highlight=hello%20world");
+});
+
+test("buildResults gates /e extensions behind optional management permission when explicitly false", () => {
+  const gated = Core.buildResults({ themesPermission: false, extensions: [] }, "/e", "all");
+  assert.equal(gated.activeMode, "extensions");
+  assert.equal(gated.items.length, 1);
+  assert.equal(gated.items[0].id, "ext-enable-permission");
+  assert.equal(gated.items[0].actionDescriptor.payload.action, "OPEN_OPTIONS");
 });
