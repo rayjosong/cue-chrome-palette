@@ -1,0 +1,34 @@
+.github/workflows/ci.yml
+  h_bd07e1019ba52e 24-31
+background.js
+  h_bd07e1019ba52e 1-5,115,214-217,219-224,226,236-247,249,299,308,310,313,316-328,330,335-336
+manifest.json
+  h_bd07e1019ba52e 23
+options.html
+  h_bd07e1019ba52e 109-152
+options.js
+  h_bd07e1019ba52e 79-88,94-95
+palette-core.js
+  h_bd07e1019ba52e 1772-1774
+palette-icons.js
+  h_bd07e1019ba52e 1-133
+palette-ui.js
+  h_bd07e1019ba52e 49,1717
+popup.html
+  h_bd07e1019ba52e 28
+tests/background.test.js
+  h_bd07e1019ba52e 1-389
+tests/palette-ui.test.js
+  h_bd07e1019ba52e 1-435
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0ed7f33037cc3914d609b4aeaacef0f94feba306",
+  "prompts": {},
+  "humans": {
+    "h_bd07e1019ba52e": {
+      "author": "rayjosong <rayjosong@users.noreply.github.com>"
+    }
+  }
+}
