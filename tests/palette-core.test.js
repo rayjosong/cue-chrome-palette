@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const Core = require("../palette-core.js");
 
 test("Mode definitions and getModeDefinition cover all modes without falling back to All", () => {
@@ -672,4 +674,18 @@ test("buildResults surfaces act-consolidate-groups when groups exist and counts 
   // Should not appear when there are no tab groups
   const noGroupsRes = Core.buildResults({ ...data, tabGroups: [] }, ">", "all");
   assert.equal(noGroupsRes.items.find((i) => i.id === "act-consolidate-groups"), undefined);
+});
+
+test("palette.css prevents modal chrome bars from shrinking vertically when .qc-list overflows", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "palette.css"), "utf8");
+  for (const selector of [".qc-search-row", ".qc-chips", ".qc-color-bar", ".qc-footer"]) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+    assert.ok(match, `${selector} rule should exist in palette.css`);
+    assert.match(
+      match[1],
+      /flex-shrink\s*:\s*0\s*;/,
+      `${selector} must set flex-shrink: 0 so overflow-x/flex layout cannot squish its vertical padding`
+    );
+  }
 });
