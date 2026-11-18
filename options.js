@@ -77,10 +77,42 @@ resetBtn.addEventListener("click", async () => {
 });
 
 saveBtn.addEventListener("click", async () => {
-  const cleaned = links.filter((l) => l.title.trim() && l.url.trim());
-  await chrome.storage.sync.set({ quickLinks: cleaned });
-  links = cleaned;
+  const normalized = links
+    .map((l) => {
+      const bang = (l.bang || "").trim();
+      const title = (l.title || "").trim();
+      let url = (l.url || "").trim();
+      if (url && !/^(https?:\/\/|chrome:\/\/)/i.test(url)) {
+        url = `https://${url}`;
+      }
+      const searchUrl = (l.searchUrl || "").trim();
+      return { bang, title, url, searchUrl };
+    })
+    .filter((l) => l.title && l.url);
+
+  const seenBangs = new Set();
+  let duplicateBang = null;
+  for (const item of normalized) {
+    if (item.bang) {
+      const lower = item.bang.toLowerCase();
+      if (seenBangs.has(lower)) {
+        duplicateBang = item.bang;
+        break;
+      }
+      seenBangs.add(lower);
+    }
+  }
+
+  if (duplicateBang) {
+    statusEl.style.color = "#f87171";
+    statusEl.textContent = `Error: Duplicate bang "!${duplicateBang}". Bangs must be unique.`;
+    return;
+  }
+
+  await chrome.storage.sync.set({ quickLinks: normalized });
+  links = normalized;
   render();
+  statusEl.style.color = "";
   statusEl.textContent = "Saved!";
   setTimeout(() => {
     statusEl.textContent = "";

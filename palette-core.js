@@ -556,7 +556,16 @@
       title: t.title,
       subtitle: t.url,
       favIconUrl: t.favIconUrl,
-      badge: t.pinned ? "Pinned" : t.currentWindow ? "Tab" : "Other Window",
+      badge:
+        t.active && t.currentWindow
+          ? t.pinned
+            ? "Pinned · Current"
+            : "Current"
+          : t.pinned
+            ? "Pinned"
+            : t.currentWindow
+              ? "Tab"
+              : "Other Window",
       badgeClass: "qc-badge-tab",
       iconClass: "qc-icon-tab",
       iconName: "globe",
@@ -626,7 +635,7 @@
     for (const ql of data.quickLinks || []) {
       const bangLower = (ql.bang || "").toLowerCase();
       if (query && bangLower && firstWord === bangLower && restQuery && ql.searchUrl) {
-        const targetUrl = ql.searchUrl.replace("{query}", encodeURIComponent(restQuery));
+        const targetUrl = ql.searchUrl.replaceAll("{query}", encodeURIComponent(restQuery));
         quickLinks.push({
           id: `bang-search-${ql.bang}`,
           frecencyId: `ql-${ql.bang}-${ql.url}`,
@@ -838,7 +847,7 @@
           b.priority + computeFrecencyBoost(frecency, b.id, now) - (a.priority + computeFrecencyBoost(frecency, a.id, now))
       );
       pool = [
-        ...tabs,
+        ...tabs.slice(0, 8),
         ...tabGroups.slice(0, 3),
         ...closedTabs.slice(0, 3),
         ...sortedLinks.slice(0, 4),
@@ -911,7 +920,8 @@
       items.sort((a, b) => b._score - a._score);
     }
 
-    const sliced = items.slice(0, 40);
+    const limit = mode === "tabs" ? 200 : mode === "all" ? 40 : 60;
+    const sliced = items.slice(0, limit);
     return {
       prefixLabel: isPrefix ? prefixLabel : "",
       activeMode: mode,

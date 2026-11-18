@@ -199,3 +199,79 @@ test("buildResults gates Chrome themes behind the optional management permission
   const legacyRes = Core.buildResults(legacy, "/t", "all");
   assert.ok(legacyRes.items.some((i) => i.title === "Silk"));
 });
+
+test("zero-query All mode caps tabs to 8 while preserving groups, links, and actions with >10 tabs", () => {
+  const tabs = Array.from({ length: 15 }, (_, i) => ({
+    id: i + 1,
+    title: `Tab ${i + 1}`,
+    url: `https://example.com/${i + 1}`,
+    currentWindow: true,
+    active: i === 0
+  }));
+  const tabGroups = [
+    { id: 101, title: "Work", color: "blue", currentWindow: true, count: 3 }
+  ];
+  const quickLinks = [
+    { bang: "gh", title: "GitHub", url: "https://github.com", searchUrl: "https://github.com/search?q={query}" }
+  ];
+
+  const res = Core.buildResults({ tabs, tabGroups, quickLinks, activeTab: tabs[0] }, "", "all");
+  const tabResults = res.items.filter((i) => i.kind === "tab");
+  assert.equal(tabResults.length, 8);
+  assert.ok(res.items.some((i) => i.kind === "group"));
+  assert.ok(res.items.some((i) => i.kind === "bang"));
+  assert.ok(res.items.some((i) => i.kind === "action"));
+});
+
+test("Tabs mode returns >40 tabs (e.g. 50 tabs)", () => {
+  const tabs = Array.from({ length: 50 }, (_, i) => ({
+    id: i + 1,
+    title: `Tab ${i + 1}`,
+    url: `https://example.com/${i + 1}`,
+    currentWindow: true,
+    active: i === 0
+  }));
+
+  const res = Core.buildResults({ tabs }, "@", "all");
+  assert.equal(res.activeMode, "tabs");
+  assert.equal(res.items.length, 50);
+
+  const resDirect = Core.buildResults({ tabs }, "", "tabs");
+  assert.equal(resDirect.items.length, 50);
+});
+
+test("Current badge is applied to active tab in current window and Pinned · Current when pinned", () => {
+  const tabs = [
+    { id: 1, title: "Active Tab", url: "https://example.com/1", currentWindow: true, active: true, pinned: false },
+    { id: 2, title: "Pinned Active Tab", url: "https://example.com/2", currentWindow: true, active: true, pinned: true },
+    { id: 3, title: "Inactive Pinned Tab", url: "https://example.com/3", currentWindow: true, active: false, pinned: true },
+    { id: 4, title: "Inactive Tab", url: "https://example.com/4", currentWindow: true, active: false, pinned: false },
+    { id: 5, title: "Other Window Tab", url: "https://example.com/5", currentWindow: false, active: false, pinned: false }
+  ];
+
+  const res = Core.buildResults({ tabs }, "", "tabs");
+  const byId = Object.fromEntries(res.items.map((i) => [i.tabId, i]));
+
+  assert.equal(byId[1].badge, "Current");
+  assert.equal(byId[2].badge, "Pinned · Current");
+  assert.equal(byId[3].badge, "Pinned");
+  assert.equal(byId[4].badge, "Tab");
+  assert.equal(byId[5].badge, "Other Window");
+});
+
+test("searchUrl with multiple {query} placeholders replaces all occurrences", () => {
+  const data = {
+    quickLinks: [
+      {
+        bang: "multi",
+        title: "Multi Query",
+        url: "https://example.com",
+        searchUrl: "https://example.com/search?q={query}&highlight={query}"
+      }
+    ]
+  };
+
+  const res = Core.buildResults(data, "multi hello world", "all");
+  assert.equal(res.items[0].id, "bang-search-multi");
+  assert.equal(res.items[0].subtitle, "https://example.com/search?q=hello%20world&highlight=hello%20world");
+});

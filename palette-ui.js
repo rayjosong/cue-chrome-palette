@@ -16,6 +16,34 @@
     });
   }
 
+  async function copyToClipboard(text) {
+    if (!text) return false;
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) {
+        // Fall back to execCommand
+      }
+    }
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      textarea.style.top = "-9999px";
+      textarea.style.opacity = "0";
+      (document.body || document.documentElement).appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const success = document.execCommand("copy");
+      textarea.remove();
+      return Boolean(success);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function createSvgIcon(name) {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
@@ -218,7 +246,6 @@
         groupPickerContext = null;
         input.placeholder = defaultPlaceholder;
         chipMode = c.id;
-        chrome.storage?.local?.set({ quickcmdLastMode: chipMode });
         selectedIndex = 0;
         render();
         input.focus();
@@ -362,10 +389,8 @@
           return { closesPalette: false };
         }
         case "COPY_TEXT": {
-          if (descriptor.text && navigator.clipboard) {
-            await navigator.clipboard.writeText(descriptor.text);
-            showToast("Copied URL to clipboard");
-          }
+          const ok = await copyToClipboard(descriptor.text || "");
+          showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
           return { closesPalette: false };
         }
         case "EXECUTE_ACTION": {
@@ -459,10 +484,8 @@
             iconName: "link",
             closesPalette: false,
             run: async () => {
-              if (item.subtitle && navigator.clipboard) {
-                await navigator.clipboard.writeText(item.subtitle);
-                showToast("Copied URL to clipboard");
-              }
+              const ok = await copyToClipboard(item.subtitle || "");
+              showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
             }
           }
         );
@@ -545,10 +568,8 @@
             iconName: "link",
             closesPalette: false,
             run: async () => {
-              if (navigator.clipboard) {
-                await navigator.clipboard.writeText(item.subtitle);
-                showToast("Copied URL to clipboard");
-              }
+              const ok = await copyToClipboard(item.subtitle || "");
+              showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
             }
           });
         }
@@ -1077,13 +1098,15 @@
       render();
       clearTimeout(historyTimer);
       const parsed = Core.parseModeAndQuery(input.value, chipMode);
-      if (parsed.query && (parsed.mode === "all" || parsed.mode === "history")) {
+      if (parsed.mode === "history" || (parsed.mode === "all" && parsed.query)) {
         historyTimer = setTimeout(async () => {
           const currentId = currentItems[selectedIndex]?.id;
           const res = await sendRuntimeMessage({ type: "SEARCH_HISTORY", query: parsed.query });
           if (res?.ok && Array.isArray(res.history)) {
-            data.history = res.history;
-            render(currentId);
+            if (Core.parseModeAndQuery(input.value, chipMode).query === parsed.query) {
+              data.history = res.history;
+              render(currentId);
+            }
           }
         }, 120);
       }
@@ -1154,7 +1177,6 @@
           ? (curIdx - 1 + CHIP_MODES.length) % CHIP_MODES.length
           : (curIdx + 1) % CHIP_MODES.length;
         chipMode = CHIP_MODES[nextIdx].id;
-        chrome.storage?.local?.set({ quickcmdLastMode: chipMode });
         selectedIndex = 0;
         render();
         return;
@@ -1205,7 +1227,10 @@
         return;
       }
 
-      if (e.key === "ArrowUp" || (e.ctrlKey && e.key.toLowerCase() === "p")) {
+      const isUpNav =
+        e.key === "ArrowUp" ||
+        (e.ctrlKey && e.key.toLowerCase() === "p" && (isMac ? !e.metaKey : selected?.kind !== "tab"));
+      if (isUpNav) {
         e.preventDefault();
         if (currentItems.length) {
           selectedIndex = (selectedIndex - 1 + currentItems.length) % currentItems.length;
@@ -1264,7 +1289,7 @@
             tabIds: [selected.tabId],
             defaultTitle: tabAnalysis.suggestedGroupTitle || "Group"
           });
-        } else if (k === "p") {
+        } else if (k === "p" && (isMac ? (e.metaKey && !e.ctrlKey) : e.ctrlKey)) {
           e.preventDefault();
           const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "PIN_TAB", tabId: selected.tabId } });
           if (res?.toast) showToast(res.toast);
@@ -1289,16 +1314,7 @@
       });
     }
 
-    if (chrome.storage?.local) {
-      chrome.storage.local.get("quickcmdLastMode", (res) => {
-        if (res?.quickcmdLastMode && CHIP_MODES.some((c) => c.id === res.quickcmdLastMode)) {
-          chipMode = res.quickcmdLastMode;
-        }
-        refreshData();
-      });
-    } else {
-      refreshData();
-    }
+    refreshData();
     setTimeout(() => input.focus(), 0);
 
     return {

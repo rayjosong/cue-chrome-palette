@@ -5,6 +5,7 @@
   let hostEl = null;
   let paletteInstance = null;
   let isClosing = false;
+  let previousActiveElement = null;
 
   function closePalette() {
     isClosing = false;
@@ -17,6 +18,12 @@
       hostEl.remove();
       hostEl = null;
     }
+    if (previousActiveElement && previousActiveElement.isConnected && typeof previousActiveElement.focus === "function") {
+      try {
+        previousActiveElement.focus();
+      } catch (_) {}
+    }
+    previousActiveElement = null;
   }
 
   function openPalette() {
@@ -38,6 +45,7 @@
       return;
     }
 
+    previousActiveElement = document.activeElement;
     isClosing = false;
     hostEl = document.createElement("div");
     hostEl.id = "quickcmd-shadow-host";
