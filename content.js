@@ -49,7 +49,7 @@
     isClosing = false;
     hostEl = document.createElement("div");
     hostEl.id = "cue-shadow-host";
-    const shadow = hostEl.attachShadow({ mode: "open" });
+    const shadow = hostEl.attachShadow({ mode: "closed" });
 
     const link = document.createElement("link");
     link.rel = "stylesheet";
@@ -86,6 +86,7 @@
   window.addEventListener(
     "keydown",
     (e) => {
+      if (!e.isTrusted) return;
       const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
       const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
       if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
