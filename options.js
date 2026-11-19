@@ -3,6 +3,7 @@ const statusEl = document.getElementById("status");
 const addBtn = document.getElementById("add-btn");
 const resetBtn = document.getElementById("reset-btn");
 const saveBtn = document.getElementById("save-btn");
+const idleSelect = document.getElementById("idle-minutes");
 
 let links = [];
 
@@ -55,12 +56,16 @@ function render() {
 }
 
 async function load() {
-  const { quickLinks } = await chrome.storage.sync.get("quickLinks");
+  const { quickLinks, idleTabMinutes } = await chrome.storage.sync.get(["quickLinks", "idleTabMinutes"]);
   if (Array.isArray(quickLinks)) {
     links = quickLinks;
   } else {
     const res = await chrome.runtime.sendMessage({ type: "GET_DEFAULT_QUICK_LINKS" });
     links = res?.defaults || [];
+  }
+  if (idleSelect) {
+    const parsed = Number(idleTabMinutes);
+    idleSelect.value = Number.isFinite(parsed) && parsed > 0 ? String(Math.floor(parsed)) : "60";
   }
   render();
 }
@@ -116,7 +121,8 @@ saveBtn.addEventListener("click", async () => {
     return;
   }
 
-  await chrome.storage.sync.set({ quickLinks: normalized });
+  const idleMinutes = idleSelect ? Math.max(1, Math.floor(Number(idleSelect.value) || 60)) : 60;
+  await chrome.storage.sync.set({ quickLinks: normalized, idleTabMinutes: idleMinutes });
   links = normalized;
   render();
   statusEl.style.color = "";

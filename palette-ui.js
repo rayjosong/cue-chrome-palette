@@ -6,7 +6,6 @@
 
   const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
   const modSymbol = isMac ? "⌘" : "Ctrl+";
-  const delSymbol = isMac ? "⌘⌫" : "Ctrl+Bksp";
   const shiftDelSymbol = isMac ? "⌘⇧⌫" : "Ctrl+Shift+Bksp";
 
   function sendRuntimeMessage(message) {
@@ -17,7 +16,7 @@
     });
   }
 
-  async function copyToClipboard(text) {
+  async function writeTextToClipboard(text, mountRoot) {
     if (!text) return false;
     if (navigator.clipboard?.writeText) {
       try {
@@ -27,21 +26,34 @@
         // Fall back to execCommand
       }
     }
+    const host = mountRoot || document.body || document.documentElement;
+    if (!host || typeof host.appendChild !== "function") return false;
+    let textarea = null;
     try {
-      const textarea = document.createElement("textarea");
+      textarea = document.createElement("textarea");
       textarea.value = text;
+      textarea.setAttribute("readonly", "");
       textarea.style.position = "fixed";
       textarea.style.left = "-9999px";
       textarea.style.top = "-9999px";
       textarea.style.opacity = "0";
-      (document.body || document.documentElement).appendChild(textarea);
+      for (const evtName of ["focusin", "copy"]) {
+        textarea.addEventListener(evtName, (e) => {
+          e.stopPropagation();
+        });
+      }
+      host.appendChild(textarea);
       textarea.focus();
       textarea.select();
       const success = document.execCommand("copy");
-      textarea.remove();
       return Boolean(success);
     } catch (_) {
       return false;
+    } finally {
+      if (textarea) {
+        textarea.value = "";
+        textarea.remove();
+      }
     }
   }
 
@@ -65,15 +77,31 @@
     }
   }
 
-  window.__CueCreatePalette = function createPalette({ container, isPopup = false, onClose }) {
+  window.__CueCreatePalette = function createPalette({ container, isPopup = false, onClose, onToast }) {
     const backdrop = document.createElement("div");
     backdrop.className = `qc-backdrop${isPopup ? " qc-is-popup" : ""}`;
 
-    // Isolate all keyboard events from leaking to the host page (GitHub, YouTube, Gmail, etc.)
-    for (const evtName of ["keydown", "keyup", "keypress"]) {
+    // Isolate keyboard, composed input, and clipboard events from leaking to the host page
+    for (const evtName of [
+      "keydown",
+      "keyup",
+      "keypress",
+      "beforeinput",
+      "input",
+      "paste",
+      "copy",
+      "cut",
+      "compositionstart",
+      "compositionupdate",
+      "compositionend"
+    ]) {
       backdrop.addEventListener(evtName, (e) => {
         e.stopPropagation();
       });
+    }
+
+    function copyToClipboard(text) {
+      return writeTextToClipboard(text, backdrop || container);
     }
 
     const modal = document.createElement("div");
@@ -240,8 +268,12 @@
       renderPopover();
     });
 
-    function showToast(msg) {
+    function showToast(msg, isError = false) {
       if (!msg) return;
+      if (typeof onToast === "function") {
+        onToast(msg, isError);
+        return;
+      }
       toastEl.textContent = msg;
       toastEl.classList.add("qc-toast-visible");
       clearTimeout(toastTimer);
@@ -453,10 +485,10 @@
         }
         case "EXECUTE_ACTION": {
           const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: descriptor.payload });
+          if (res?.toast) showToast(res.toast);
+          else if (res?.error) showToast(res.error, true);
           const keepsOpen = Boolean(descriptor.keepsOpen || item?.keepsOpen);
           if (keepsOpen) {
-            if (res?.toast) showToast(res.toast);
-            else if (res?.error) showToast(res.error);
             await refreshData(currentItems[selectedIndex]?.id);
             return { closesPalette: false };
           }
@@ -579,9 +611,9 @@
             iconName: "link",
             closesPalette: true,
             run: async () => {
-              if (item.subtitle && navigator.clipboard) {
-                await navigator.clipboard.writeText(item.subtitle);
-                showToast("Copied URL to clipboard");
+              if (item.subtitle) {
+                const ok = await copyToClipboard(item.subtitle);
+                showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
               }
             }
           }
@@ -748,7 +780,6 @@
         }
         list.push({
           title: "Close Tab",
-          shortcut: delSymbol,
           iconName: "x",
           closesPalette: true,
           run: async () => {
@@ -775,6 +806,18 @@
             iconName: "globe",
             closesPalette: true,
             run: () => sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "FOCUS_GROUP", groupId: item.groupId } })
+          },
+          {
+            title: "Open New Tab in Group",
+            iconName: "layers",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "NEW_TAB_IN_GROUP", groupId: item.groupId, windowId: item.windowId }
+              });
+              if (res?.toast) showToast(res.toast);
+            }
           },
           {
             title: "Rename / Recolor Group…",
@@ -872,6 +915,31 @@
           closesPalette: !item.keepsOpen,
           run: () => item.run()
         });
+        if (
+          item.actionDescriptor?.payload?.action === "OPEN_URL" &&
+          item.actionDescriptor.payload.url &&
+          latestData?.activeTab?.groupId !== undefined &&
+          latestData.activeTab.groupId !== -1
+        ) {
+          list.push({
+            title: "Open in Current Group",
+            iconName: "layers",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: {
+                  action: "OPEN_URL_IN_CURRENT_GROUP",
+                  url: item.actionDescriptor.payload.url,
+                  groupId: latestData.activeTab.groupId,
+                  windowId: latestData.activeTab.windowId
+                }
+              });
+              recordItemUsage(item);
+              if (res?.toast) showToast(res.toast);
+            }
+          });
+        }
         if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
           list.push(
             {
@@ -1060,8 +1128,7 @@
         if (selected.kind === "tab") {
           const tabAnalysis = Core.analyzeTabs(data.tabs || [], { url: selected.subtitle || "" });
           specs = [
-            ["↵", "Switch"],
-            [delSymbol, "Close"]
+            ["↵", "Switch"]
           ];
           if ((tabAnalysis.baseDomainCount || tabAnalysis.domainCount) > 1) {
             specs.push([shiftDelSymbol, "Close Site"]);
@@ -1546,6 +1613,7 @@
         }
         if (item.favIconUrl && /^(https?:|chrome:|data:)/i.test(item.favIconUrl)) {
           const img = document.createElement("img");
+          img.referrerPolicy = "no-referrer";
           img.src = item.favIconUrl;
           img.alt = "";
           img.onerror = () => {
@@ -1620,7 +1688,7 @@
           const closeBtn = document.createElement("button");
           closeBtn.type = "button";
           closeBtn.className = "qc-tab-btn";
-          closeBtn.title = `Close tab (${delSymbol})`;
+          closeBtn.title = "Close tab";
           closeBtn.textContent = "✕";
           closeBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
@@ -1981,11 +2049,6 @@
             if (res?.toast) showToast(res.toast);
             await refreshData();
           }
-        } else if (e.key === "Backspace") {
-          e.preventDefault();
-          const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_TAB", tabId: selected.tabId } });
-          if (res?.toast) showToast(res.toast);
-          await refreshData();
         } else if (k === "g") {
           e.preventDefault();
           const tabAnalysis = Core.analyzeTabs(data.tabs || [], { url: selected.subtitle || "" });
@@ -2010,10 +2073,8 @@
           await refreshData(currentId);
         } else if (k === "c" && selected.subtitle) {
           e.preventDefault();
-          if (navigator.clipboard) {
-            await navigator.clipboard.writeText(selected.subtitle);
-            showToast("Copied URL to clipboard");
-          }
+          const ok = await copyToClipboard(selected.subtitle);
+          showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
         }
       }
     });

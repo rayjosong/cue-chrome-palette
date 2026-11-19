@@ -818,3 +818,43 @@ test("command actions and copy descriptors do not keep the palette open after ru
     }
   }
 });
+
+test("analyzeTabs and buildResults surface act-close-idle and act-new-tab-in-group", () => {
+  const now = Date.now();
+  const data = {
+    activeTab: { id: 1, windowId: 10, title: "Active", url: "https://example.com", groupId: 5 },
+    idleTabMinutes: 30,
+    tabGroups: [{ id: 5, title: "Work", color: "blue", currentWindow: true, tabCount: 2 }],
+    tabs: [
+      { id: 1, windowId: 10, title: "Active", url: "https://example.com", active: true, pinned: false, audible: false, lastAccessed: now - 1000, currentWindow: true },
+      { id: 2, windowId: 10, title: "Idle", url: "https://idle.com", active: false, pinned: false, audible: false, lastAccessed: now - 45 * 60 * 1000, currentWindow: true },
+      { id: 3, windowId: 10, title: "Pinned", url: "https://pin.com", active: false, pinned: true, audible: false, lastAccessed: now - 45 * 60 * 1000, currentWindow: true },
+      { id: 4, windowId: 10, title: "Fresh", url: "https://fresh.com", active: false, pinned: false, audible: false, lastAccessed: now - 5 * 60 * 1000, currentWindow: true }
+    ]
+  };
+
+  const res = Core.buildResults(data, ">", "all");
+  const idleAct = res.items.find((i) => i.id === "act-close-idle");
+  assert.ok(idleAct, "act-close-idle should be present");
+  assert.equal(idleAct.title, "Close Idle Tabs (1)");
+  assert.deepEqual(idleAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "CLOSE_IDLE_TABS", idleMinutes: 30 }
+  });
+
+  const newTabGroupAct = res.items.find((i) => i.id === "act-new-tab-in-group");
+  assert.ok(newTabGroupAct, "act-new-tab-in-group should be present when activeTab is in a group");
+  assert.equal(newTabGroupAct.title, "New Tab in Current Group");
+  assert.equal(newTabGroupAct.subtitle, 'Open a new tab inside "Work"');
+  assert.deepEqual(newTabGroupAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "NEW_TAB_IN_GROUP", groupId: 5, windowId: 10 }
+  });
+
+  const ungroupedRes = Core.buildResults(
+    { ...data, activeTab: { ...data.activeTab, groupId: -1 } },
+    ">",
+    "all"
+  );
+  assert.equal(ungroupedRes.items.some((i) => i.id === "act-new-tab-in-group"), false);
+});

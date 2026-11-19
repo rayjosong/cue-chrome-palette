@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-function createDomShim() {
+function createDomShim(overrides = {}) {
   class FakeClassList {
     constructor(el) {
       this._el = el;
@@ -216,7 +216,8 @@ function createDomShim() {
     createTextNode(text) {
       return new FakeTextNode(text);
     },
-    execCommand() {
+    execCommand(cmd) {
+      if (overrides.onExecCommand) return overrides.onExecCommand(cmd, document);
       return true;
     }
   };
@@ -225,7 +226,7 @@ function createDomShim() {
 }
 
 function mountPalette(overrides = {}) {
-  const { document } = createDomShim();
+  const { document } = createDomShim(overrides);
   const sentMessages = [];
   let closedCount = 0;
 
@@ -254,7 +255,7 @@ function mountPalette(overrides = {}) {
     innerWidth: 1440,
     innerHeight: 900
   };
-  const navigatorObj = { platform: "MacIntel", clipboard: { writeText: async () => {} } };
+  const navigatorObj = overrides.navigator || { platform: "MacIntel", clipboard: { writeText: async () => {} } };
 
   const chromeObj = {
     runtime: {
@@ -318,6 +319,7 @@ function mountPalette(overrides = {}) {
   });
 
   return {
+    document,
     container,
     instance,
     sentMessages,
@@ -432,4 +434,109 @@ test("palette-ui destroy triggers onClose", async () => {
   assert.equal(ui.getClosedCount(), 0);
   ui.instance.destroy();
   assert.equal(ui.getClosedCount(), 1);
+});
+
+test("palette-ui sets referrerPolicy='no-referrer' on favicon <img> elements", async () => {
+  const ui = mountPalette({
+    data: {
+      activeTab: { id: 1, windowId: 100, groupId: -1, title: "Active Tab", url: "https://github.com/org/repo", favIconUrl: "https://github.com/favicon.ico", pinned: false, audible: false, muted: false },
+      tabs: [
+        { id: 2, windowId: 100, groupId: -1, title: "MDN Web Docs", url: "https://developer.mozilla.org/en-US/", favIconUrl: "https://developer.mozilla.org/favicon.ico", active: false, currentWindow: true, pinned: false, lastAccessed: 2000 },
+        { id: 1, windowId: 100, groupId: -1, title: "Active Tab", url: "https://github.com/org/repo", favIconUrl: "https://github.com/favicon.ico", active: true, currentWindow: true, pinned: false, lastAccessed: 1000 }
+      ],
+      tabGroups: [],
+      closedTabs: [],
+      quickLinks: [],
+      chromePages: [],
+      bookmarks: [],
+      history: [],
+      frecency: {},
+      themes: [],
+      themesPermission: false,
+      extensions: [],
+      downloads: [],
+      windows: [{ id: 100, focused: true, incognito: false, tabCount: 2, title: "Active Tab" }]
+    }
+  });
+  await flush();
+
+  const imgs = ui.container.querySelectorAll("img");
+  assert.ok(imgs.length > 0, "expected at least one favicon <img>");
+  for (const img of imgs) {
+    assert.equal(img.referrerPolicy, "no-referrer");
+  }
+});
+
+test("palette-ui stops propagation of beforeinput, input, paste, and composition events on backdrop", async () => {
+  const ui = mountPalette();
+  await flush();
+
+  const backdrop = ui.container.querySelector(".qc-backdrop");
+  assert.ok(backdrop, "backdrop should exist");
+
+  for (const type of ["beforeinput", "input", "paste", "copy", "cut", "compositionstart", "compositionupdate", "compositionend"]) {
+    let stopped = false;
+    backdrop.dispatchEvent({
+      type,
+      stopPropagation: () => {
+        stopped = true;
+      }
+    });
+    assert.equal(stopped, true, `expected ${type} to call stopPropagation() on backdrop`);
+  }
+});
+
+test("palette-ui copyToClipboard fallback mounts inside backdrop (not document.body) and clears textarea.value before removal", async () => {
+  let capturedTextarea = null;
+  let bodyHasTextareaDuringExec = false;
+  let docElHasTextareaDuringExec = false;
+  let focusinStopped = false;
+  let copyStopped = false;
+
+  const ui = mountPalette({
+    navigator: {
+      platform: "MacIntel",
+      clipboard: {
+        writeText: async () => {
+          throw new Error("Clipboard API unavailable");
+        }
+      }
+    },
+    onExecCommand: (cmd, doc) => {
+      assert.equal(cmd, "copy");
+      const backdrop = ui.container.querySelector(".qc-backdrop");
+      capturedTextarea = backdrop.querySelector("textarea");
+      bodyHasTextareaDuringExec = doc.body.children.some((c) => c.tagName === "TEXTAREA");
+      docElHasTextareaDuringExec = doc.documentElement.querySelectorAll("textarea").length > 0;
+      if (capturedTextarea) {
+        capturedTextarea.dispatchEvent({
+          type: "focusin",
+          stopPropagation: () => {
+            focusinStopped = true;
+          }
+        });
+        capturedTextarea.dispatchEvent({
+          type: "copy",
+          stopPropagation: () => {
+            copyStopped = true;
+          }
+        });
+      }
+      return true;
+    }
+  });
+  await flush();
+
+  // Trigger Cmd+C on the selected tab item
+  const modal = ui.getModal();
+  modal.dispatchEvent({ type: "keydown", key: "c", metaKey: true, preventDefault: () => {} });
+  await flush();
+
+  assert.ok(capturedTextarea, "fallback textarea should be mounted inside backdrop");
+  assert.equal(bodyHasTextareaDuringExec, false, "textarea must NOT be appended to document.body");
+  assert.equal(docElHasTextareaDuringExec, false, "textarea must NOT be appended to document.documentElement");
+  assert.equal(focusinStopped, true, "focusin on fallback textarea should stopPropagation");
+  assert.equal(copyStopped, true, "copy on fallback textarea should stopPropagation");
+  assert.equal(capturedTextarea.value, "", "textarea.value should be cleared before removal");
+  assert.equal(capturedTextarea.parentNode, null, "textarea should be removed after copy");
 });

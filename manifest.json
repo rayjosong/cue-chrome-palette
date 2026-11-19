@@ -20,7 +20,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["palette-core.js", "palette-icons.js", "palette-ui.js", "content.js"],
+      "js": ["content.js"],
       "run_at": "document_idle"
     }
   ],
@@ -43,8 +43,9 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["palette.css"],
-      "matches": ["<all_urls>"]
+      "resources": ["palette-frame.html"],
+      "matches": ["<all_urls>"],
+      "use_dynamic_url": true
     }
   ]
 }

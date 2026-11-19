@@ -47,7 +47,8 @@
         color: rgba(255, 255, 255, 0.45);
         margin-bottom: 8px;
       }
-      input {
+      input,
+      select {
         background: rgba(255, 255, 255, 0.06);
         border: 1px solid rgba(255, 255, 255, 0.12);
         color: #f4f4f6;
@@ -58,7 +59,8 @@
         width: 100%;
         box-sizing: border-box;
       }
-      input:focus {
+      input:focus,
+      select:focus {
         border-color: rgba(129, 140, 248, 0.65);
       }
       button {
@@ -123,7 +125,8 @@
         .hdr {
           color: rgba(15, 23, 42, 0.6);
         }
-        input {
+        input,
+        select {
           background: rgba(15, 23, 42, 0.04);
           border-color: rgba(15, 23, 42, 0.14);
           color: #111827;
@@ -176,6 +179,23 @@
         <div>
           <span id="status" class="status"></span>
           <button id="save-btn" class="primary">Save Changes</button>
+        </div>
+      </div>
+
+      <div class="theme-section">
+        <h2>Idle Tab Cleanup</h2>
+        <p class="sub">
+          Choose how long an unpinned, silent tab must be inactive before <strong>Close Idle Tabs</strong> closes it.
+        </p>
+        <div style="max-width: 220px;">
+          <select id="idle-minutes">
+            <option value="15">15 minutes</option>
+            <option value="30">30 minutes</option>
+            <option value="60" selected>1 hour (default)</option>
+            <option value="120">2 hours</option>
+            <option value="240">4 hours</option>
+            <option value="1440">24 hours</option>
+          </select>
         </div>
       </div>
 

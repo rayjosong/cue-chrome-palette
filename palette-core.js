@@ -482,9 +482,21 @@
     return Math.round(boost * 100) / 100;
   }
 
-  function analyzeTabs(tabs = [], activeTab = null) {
+  function analyzeTabs(tabs = [], activeTab = null, options = {}) {
     const windowTabs = tabs.filter((t) => t.currentWindow !== false);
     const targetTabs = windowTabs.length > 0 ? windowTabs : tabs;
+    const now = Number.isFinite(Number(options?.now)) ? Number(options.now) : Date.now();
+    const rawIdle = Number(options?.idleMinutes);
+    const idleMinutes = Number.isFinite(rawIdle) && rawIdle > 0 ? Math.floor(rawIdle) : 60;
+    const idleCutoff = now - idleMinutes * 60 * 1000;
+
+    const idleTabIds = [];
+    for (const t of targetTabs) {
+      if (t.active || t.pinned || t.audible) continue;
+      if (t.lastAccessed > 0 && t.lastAccessed <= idleCutoff) {
+        idleTabIds.push(t.id);
+      }
+    }
 
     const urlMap = new Map();
     for (const t of targetTabs) {
@@ -571,7 +583,10 @@
       activeBaseDomain,
       baseDomainTabIds,
       baseDomainCount: baseDomainTabIds.length,
-      baseDomainGroups
+      baseDomainGroups,
+      idleTabIds,
+      idleCount: idleTabIds.length,
+      idleMinutes
     };
   }
 
@@ -702,6 +717,27 @@
         },
         ...(activeTab.groupId !== undefined && activeTab.groupId !== -1
           ? [
+              (() => {
+                const currentGroup = (contextData?.tabGroups || []).find((g) => g.id === activeTab.groupId);
+                return {
+                  id: "act-new-tab-in-group",
+                  kind: "action",
+                  section: "Actions",
+                  title: "New Tab in Current Group",
+                  subtitle: currentGroup ? `Open a new tab inside "${currentGroup.title}"` : "Open a new tab in the active tab's group",
+                  badge: "Group",
+                  badgeClass: "qc-badge-group",
+                  iconClass: "qc-icon-group",
+                  iconName: "layers",
+                  enterVerb: "Open",
+                  priority: 11.5,
+                  searchText: "new tab in current group open blank tab group",
+                  actionDescriptor: {
+                    type: "EXECUTE_ACTION",
+                    payload: { action: "NEW_TAB_IN_GROUP", groupId: activeTab.groupId, windowId: activeTab.windowId }
+                  }
+                };
+              })(),
               {
                 id: "act-ungroup",
                 kind: "action",
@@ -1106,6 +1142,27 @@
         }
       },
       {
+        id: "act-close-idle",
+        kind: "action",
+        section: "Actions",
+        title: analysis.idleCount > 0 ? `Close Idle Tabs (${analysis.idleCount})` : "Close Idle Tabs",
+        subtitle:
+          analysis.idleCount > 0
+            ? `Close ${analysis.idleCount} unpinned ${analysis.idleCount === 1 ? "tab" : "tabs"} inactive for ${analysis.idleMinutes}+ min`
+            : `No unpinned tabs inactive for ${analysis.idleMinutes}+ min`,
+        badge: analysis.idleCount > 0 ? `${analysis.idleCount} Idle` : "Cleanup",
+        badgeClass: "qc-badge-action",
+        iconClass: "qc-icon-action",
+        iconName: "x",
+        enterVerb: "Clean Up",
+        priority: analysis.idleCount > 0 ? 14 : 9.2,
+        searchText: "close idle tabs inactive stale unused cleanup",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "CLOSE_IDLE_TABS", idleMinutes: analysis.idleMinutes }
+        }
+      },
+      {
         id: "act-close-others",
         kind: "action",
         section: "Actions",
@@ -1186,7 +1243,7 @@
     const { mode, query, prefixLabel, isPrefix } = parseModeAndQuery(rawQuery, chipMode);
     const frecency = data.frecency || {};
     const now = Date.now();
-    const analysis = analyzeTabs(data.tabs || [], data.activeTab || null);
+    const analysis = analyzeTabs(data.tabs || [], data.activeTab || null, { now, idleMinutes: data.idleTabMinutes });
     const items = [];
 
     const tabs = (data.tabs || []).map((t, idx) => ({

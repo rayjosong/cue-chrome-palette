@@ -58,14 +58,78 @@ function persistMru() {
   }
 }
 
+const MAX_CLOSED_TABS = 15;
+const tabSnapshots = new Map();
+let closedTabsCache = [];
+let closedTabsLoaded = false;
+
+async function ensureClosedTabsLoaded() {
+  if (closedTabsLoaded) return;
+  closedTabsLoaded = true;
+  try {
+    const stored = await chrome.storage.session.get("cueClosedTabs");
+    if (Array.isArray(stored.cueClosedTabs)) {
+      closedTabsCache = stored.cueClosedTabs.slice(0, MAX_CLOSED_TABS);
+    }
+  } catch {
+    // Session storage might be unavailable
+  }
+}
+
+function persistClosedTabs() {
+  try {
+    chrome.storage.session.set({ cueClosedTabs: closedTabsCache }).catch(() => {});
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function recordTabSnapshot(tab) {
+  if (!tab || tab.id == null || !tab.url || isRestrictedUrl(tab.url)) return;
+  tabSnapshots.set(tab.id, {
+    title: tab.title || tab.url,
+    url: tab.url,
+    favIconUrl: tab.favIconUrl || ""
+  });
+}
+
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   mruTimestamps.set(tabId, Date.now());
   persistMru();
+  if (chrome.tabs.get) {
+    chrome.tabs.get(tabId).then(recordTabSnapshot).catch(() => {});
+  }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+if (chrome.tabs.onUpdated) {
+  chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+    if (changeInfo.url || changeInfo.title || changeInfo.status === "complete") {
+      recordTabSnapshot(tab);
+    }
+  });
+}
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
   mruTimestamps.delete(tabId);
   persistMru();
+
+  const snap = tabSnapshots.get(tabId);
+  tabSnapshots.delete(tabId);
+  if (!snap || !snap.url || isRestrictedUrl(snap.url)) return;
+
+  await ensureClosedTabsLoaded();
+  const entry = {
+    sessionId: `local-${Date.now()}-${tabId}`,
+    title: snap.title || snap.url || "Closed Tab",
+    url: snap.url,
+    favIconUrl: snap.favIconUrl || "",
+    lastModified: Math.floor(Date.now() / 1000)
+  };
+  closedTabsCache = [
+    entry,
+    ...closedTabsCache.filter((c) => c.url !== entry.url)
+  ].slice(0, MAX_CLOSED_TABS);
+  persistClosedTabs();
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -112,7 +176,7 @@ chrome.commands.onCommand.addListener(async (command) => {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: activeTab.id },
-        files: ["palette-core.js", "palette-icons.js", "palette-ui.js", "content.js"]
+        files: ["content.js"]
       });
       const res = await chrome.tabs.sendMessage(activeTab.id, { type: "TOGGLE_PALETTE" });
       if (!res || !res.ok) throw new Error("Fallback to popup");
@@ -126,9 +190,17 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 });
 
+const DEFAULT_IDLE_TAB_MINUTES = 60;
+
 async function getQuickLinks() {
   const { quickLinks } = await chrome.storage.sync.get("quickLinks");
   return Array.isArray(quickLinks) ? quickLinks : DEFAULT_QUICK_LINKS;
+}
+
+async function getIdleTabMinutes() {
+  const { idleTabMinutes } = await chrome.storage.sync.get("idleTabMinutes");
+  const parsed = Number(idleTabMinutes);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_IDLE_TAB_MINUTES;
 }
 
 let cachedBookmarks = null;
@@ -294,16 +366,16 @@ async function getRecentDownloads() {
 }
 
 async function getPaletteData(query = "") {
-  await ensureMruLoaded();
+  await Promise.all([ensureMruLoaded(), ensureClosedTabsLoaded()]);
 
-  const [tabs, activeTabs, quickLinks, bookmarks, historyItems, tabGroups, recentSessions, frecency, mgmtData, downloads, normalWindows] = await Promise.all([
+  const [tabs, activeTabs, quickLinks, idleTabMinutes, bookmarks, historyItems, tabGroups, frecency, mgmtData, downloads, normalWindows] = await Promise.all([
     chrome.tabs.query({}),
     chrome.tabs.query({ active: true, currentWindow: true }),
     getQuickLinks(),
+    getIdleTabMinutes(),
     getBookmarks(),
     searchHistory(query),
     chrome.tabGroups ? chrome.tabGroups.query({}).catch(() => []) : Promise.resolve([]),
-    chrome.sessions ? chrome.sessions.getRecentlyClosed({ maxResults: 15 }).catch(() => []) : Promise.resolve([]),
     getFrecency(),
     getManagementData(),
     getRecentDownloads(),
@@ -351,6 +423,7 @@ async function getPaletteData(query = "") {
   }
 
   const mappedTabs = tabs.map((t) => {
+    recordTabSnapshot(t);
     if (t.groupId !== undefined && t.groupId !== -1 && groupMap.has(t.groupId)) {
       groupMap.get(t.groupId).tabCount += 1;
     }
@@ -377,26 +450,7 @@ async function getPaletteData(query = "") {
     return b.lastAccessed - a.lastAccessed;
   });
 
-  const closedTabs = [];
-  for (const s of recentSessions) {
-    if (s.tab) {
-      closedTabs.push({
-        sessionId: s.tab.sessionId,
-        title: s.tab.title || s.tab.url || "Closed Tab",
-        url: s.tab.url || "",
-        favIconUrl: s.tab.favIconUrl || "",
-        lastModified: s.lastModified || 0
-      });
-    } else if (s.window && Array.isArray(s.window.tabs)) {
-      closedTabs.push({
-        sessionId: s.window.sessionId,
-        title: `Closed Window (${s.window.tabs.length} tabs)`,
-        url: s.window.tabs[0]?.url || "",
-        favIconUrl: "",
-        lastModified: s.lastModified || 0
-      });
-    }
-  }
+  const closedTabs = [...closedTabsCache];
 
   return {
     activeTab: activeTab
@@ -416,6 +470,7 @@ async function getPaletteData(query = "") {
     tabGroups: Array.from(groupMap.values()),
     closedTabs,
     quickLinks,
+    idleTabMinutes,
     chromePages: CHROME_PAGES,
     bookmarks,
     history: historyItems,
@@ -436,6 +491,9 @@ async function executeAction(payload) {
       await chrome.tabs.update(tabId, { active: true });
       if (windowId !== undefined) {
         await chrome.windows.update(windowId, { focused: true });
+      }
+      if (tabId !== undefined) {
+        chrome.tabs.sendMessage(tabId, { type: "SHOW_TOAST", toast: "Switched tab" }).catch(() => {});
       }
       return { ok: true, toast: "Switched tab" };
     }
@@ -466,6 +524,72 @@ async function executeAction(payload) {
       const toClose = all.filter((t) => t.id !== active.id && !t.pinned).map((t) => t.id);
       if (toClose.length) await chrome.tabs.remove(toClose);
       return { ok: true, toast: "Closed " + toClose.length + " tab(s)" };
+    }
+    case "CLOSE_IDLE_TABS": {
+      await ensureMruLoaded();
+      const rawMinutes = Number(payload.idleMinutes);
+      const idleMinutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? Math.floor(rawMinutes) : await getIdleTabMinutes();
+      const cutoff = Date.now() - idleMinutes * 60 * 1000;
+      const all = await chrome.tabs.query({ currentWindow: true });
+      const toClose = all
+        .filter((t) => {
+          if (t.active || t.pinned || t.audible) return false;
+          const lastAccessed = Math.max(t.lastAccessed || 0, mruTimestamps.get(t.id) || 0);
+          return lastAccessed > 0 && lastAccessed <= cutoff;
+        })
+        .map((t) => t.id);
+      if (toClose.length) await chrome.tabs.remove(toClose);
+      return {
+        ok: true,
+        closedCount: toClose.length,
+        toast: toClose.length
+          ? `Closed ${toClose.length} idle ${toClose.length === 1 ? "tab" : "tabs"}`
+          : `No idle tabs (${idleMinutes}+ min)`
+      };
+    }
+    case "NEW_TAB_IN_GROUP": {
+      let groupId = payload.groupId;
+      let targetWindowId = windowId;
+      if (groupId === undefined || groupId === -1) {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (active) {
+          groupId = active.groupId;
+          if (targetWindowId === undefined) targetWindowId = active.windowId;
+        }
+      }
+      if (groupId === undefined || groupId === -1) {
+        return { ok: false, error: "Current tab is not in a group" };
+      }
+      const createOpts = { active: true };
+      if (targetWindowId !== undefined) createOpts.windowId = targetWindowId;
+      const created = await chrome.tabs.create(createOpts);
+      if (created?.id !== undefined && chrome.tabs?.group) {
+        await chrome.tabs.group({ tabIds: [created.id], groupId });
+      }
+      return { ok: true, tabId: created?.id, toast: "Opened new tab in group" };
+    }
+    case "OPEN_URL_IN_CURRENT_GROUP": {
+      if (!url) return { ok: false, error: "No URL provided" };
+      let groupId = payload.groupId;
+      let targetWindowId = windowId;
+      if (groupId === undefined || groupId === -1) {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (active) {
+          groupId = active.groupId;
+          if (targetWindowId === undefined) targetWindowId = active.windowId;
+        }
+      }
+      const createOpts = { url, active: true };
+      if (targetWindowId !== undefined) createOpts.windowId = targetWindowId;
+      const created = await chrome.tabs.create(createOpts);
+      if (created?.id !== undefined && groupId !== undefined && groupId !== -1 && chrome.tabs?.group) {
+        await chrome.tabs.group({ tabIds: [created.id], groupId });
+      }
+      return {
+        ok: true,
+        tabId: created?.id,
+        toast: groupId !== undefined && groupId !== -1 ? "Opened in current group" : undefined
+      };
     }
     case "MOVE_TAB_NEW_WINDOW": {
       if (payload.tabId !== undefined) {
@@ -561,8 +685,21 @@ async function executeAction(payload) {
       return { ok: true };
     }
     case "RESTORE_SESSION": {
-      await chrome.sessions.restore(payload.sessionId);
-      return { ok: true, toast: "Restored closed session" };
+      await ensureClosedTabsLoaded();
+      const idx = closedTabsCache.findIndex((c) => c.sessionId === payload.sessionId);
+      if (idx !== -1) {
+        const [entry] = closedTabsCache.splice(idx, 1);
+        persistClosedTabs();
+        if (entry?.url) {
+          await chrome.tabs.create({ url: entry.url, active: true });
+          return { ok: true, toast: "Restored closed tab" };
+        }
+      }
+      if (chrome.sessions?.restore && payload.sessionId && !String(payload.sessionId).startsWith("local-")) {
+        await chrome.sessions.restore(payload.sessionId);
+        return { ok: true, toast: "Restored closed session" };
+      }
+      return { ok: false, error: "Closed tab is no longer available" };
     }
     case "FOCUS_GROUP": {
       const groupTabs = await chrome.tabs.query({ groupId: payload.groupId });

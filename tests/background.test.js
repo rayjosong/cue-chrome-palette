@@ -281,7 +281,7 @@ test("GET_PALETTE_DATA returns complete data shape, MRU order, and group tab cou
   assert.equal(data.tabGroups[0].tabCount, 1);
   assert.equal(data.bookmarks.length, 1);
   assert.equal(data.history.length, 1);
-  assert.equal(data.closedTabs.length, 1);
+  assert.deepEqual(plain(data.closedTabs), []);
   assert.equal(data.downloads[0].basename, "report.pdf");
   assert.equal(data.windows.length, 2);
   assert.equal(data.themesPermission, false);
@@ -373,6 +373,7 @@ test("toggle-palette command injects scripts on uninitialized tab and opens popu
   });
   await uninit.listeners.onCommand[0]("toggle-palette");
   assert.equal(uninit.calls.scriptingExecuteScript.length, 1);
+  assert.deepEqual(Array.from(uninit.calls.scriptingExecuteScript[0].files), ["content.js"]);
   assert.equal(uninit.calls.tabsSendMessage.length, 2);
 });
 
@@ -386,4 +387,78 @@ test("GET_DEFAULT_QUICK_LINKS and RECORD_USAGE respond with expected data", asyn
   const usage = await sendMessage({ type: "RECORD_USAGE", itemId: "tab-2" });
   assert.equal(usage.ok, true);
   assert.equal(calls.storageLocalSet.length, 1);
+});
+
+test("recently closed tabs are tracked via tabs.onRemoved without calling chrome.sessions.getRecentlyClosed and restored via RESTORE_SESSION", async () => {
+  const { sendMessage, listeners, calls, state } = createChromeHarness();
+  state.sessions = null; // Would throw if chrome.sessions.getRecentlyClosed were called
+
+  // Seed snapshots from open tabs
+  await sendMessage({ type: "GET_PALETTE_DATA", query: "" });
+
+  // Simulate closing tab 2 (https://docs.github.com/en)
+  await listeners.onRemoved[0](2);
+
+  const afterClose = await sendMessage({ type: "GET_PALETTE_DATA", query: "" });
+  assert.equal(afterClose.data.closedTabs.length, 1);
+  assert.equal(afterClose.data.closedTabs[0].url, "https://docs.github.com/en");
+
+  const sessionId = afterClose.data.closedTabs[0].sessionId;
+  const restoreRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "RESTORE_SESSION", sessionId }
+  });
+  assert.equal(restoreRes.ok, true);
+  assert.deepEqual(plain(calls.tabsCreate[0]), { url: "https://docs.github.com/en", active: true });
+
+  const afterRestore = await sendMessage({ type: "GET_PALETTE_DATA", query: "" });
+  assert.deepEqual(plain(afterRestore.data.closedTabs), []);
+});
+
+test("EXECUTE_ACTION CLOSE_IDLE_TABS closes only unpinned silent inactive tabs older than threshold", async () => {
+  const now = Date.now();
+  const { sendMessage, calls } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, active: true, pinned: false, audible: false, lastAccessed: now - 120 * 60 * 1000, title: "Active", url: "https://a.com" },
+      { id: 2, windowId: 100, active: false, pinned: true, audible: false, lastAccessed: now - 120 * 60 * 1000, title: "Pinned", url: "https://b.com" },
+      { id: 3, windowId: 100, active: false, pinned: false, audible: true, lastAccessed: now - 120 * 60 * 1000, title: "Audible", url: "https://c.com" },
+      { id: 4, windowId: 100, active: false, pinned: false, audible: false, lastAccessed: now - 10 * 60 * 1000, title: "Recent", url: "https://d.com" },
+      { id: 5, windowId: 100, active: false, pinned: false, audible: false, lastAccessed: now - 90 * 60 * 1000, title: "Idle 1", url: "https://e.com" },
+      { id: 6, windowId: 200, active: false, pinned: false, audible: false, lastAccessed: now - 90 * 60 * 1000, title: "Other Win", url: "https://f.com" }
+    ]
+  });
+
+  const res = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "CLOSE_IDLE_TABS", idleMinutes: 60 }
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.closedCount, 1);
+  assert.deepEqual(plain(calls.tabsRemove[0]), [5]);
+});
+
+test("EXECUTE_ACTION NEW_TAB_IN_GROUP and OPEN_URL_IN_CURRENT_GROUP open tabs inside the target group", async () => {
+  const { sendMessage, calls } = createChromeHarness();
+
+  const newTabRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "NEW_TAB_IN_GROUP", groupId: 10, windowId: 100 }
+  });
+  assert.equal(newTabRes.ok, true);
+  assert.deepEqual(plain(calls.tabsCreate[0]), { windowId: 100, active: true });
+  assert.deepEqual(plain(calls.tabsGroup[0]), { tabIds: [999], groupId: 10 });
+
+  const openUrlRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "OPEN_URL_IN_CURRENT_GROUP", url: "https://example.com", groupId: 10, windowId: 100 }
+  });
+  assert.equal(openUrlRes.ok, true);
+  assert.deepEqual(plain(calls.tabsCreate[1]), { url: "https://example.com", windowId: 100, active: true });
+  assert.deepEqual(plain(calls.tabsGroup[1]), { tabIds: [999], groupId: 10 });
+
+  const noGroupRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "NEW_TAB_IN_GROUP", groupId: -1, windowId: 100 }
+  });
+  assert.equal(noGroupRes.ok, false);
 });

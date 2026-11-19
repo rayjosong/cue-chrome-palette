@@ -844,6 +844,58 @@
   transform: translate(-50%, 0);
 }
 
+.qc-toast-floating {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translate(-50%, 10px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--qc-bg-solid);
+  color: var(--qc-text);
+  border: 1px solid var(--qc-accent-border);
+  box-shadow: var(--qc-shadow);
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  z-index: 2147483647;
+  white-space: nowrap;
+  max-width: min(90vw, 460px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qc-toast-floating.qc-toast-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.qc-toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--qc-accent-fill);
+  color: var(--qc-accent);
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.qc-toast-floating.qc-toast-error .qc-toast-icon {
+  background: rgba(248, 113, 113, 0.16);
+  color: #f87171;
+}
+
 .qc-modal {
   position: relative;
 }
