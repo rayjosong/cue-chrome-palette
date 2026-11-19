@@ -1,0 +1,40 @@
+background.js
+  h_bd07e1019ba52e 61-95,99-101,104-112,115-132,179,193-194,200-205,369,371,375,426,453,473,495-497,528-593,688-702
+content.js
+  h_bd07e1019ba52e 2,5-6,8-9,11,13-141,144-145,147-152,154,173-176,186-187,190-191,194-217,220-227,229-230,232,260-262
+manifest.json
+  h_bd07e1019ba52e 23,46-48
+options.html
+  h_bd07e1019ba52e 50-51,62-63,128-129,185-201
+options.js
+  h_bd07e1019ba52e 6,59,66-69,124-125
+palette-core.js
+  h_bd07e1019ba52e 485,488-499,586-589,720-740,1144-1164,1246
+palette-frame.html
+  h_bd07e1019ba52e 1-26
+palette-frame.js
+  h_bd07e1019ba52e 1-75
+palette-ui.js
+  h_bd07e1019ba52e 19,29-31,33,35,40-45,52-56,80,84-97,103-106,271,273-276,488-489,614-616,810-821,918-942,1131,1616,1691,2076-2077
+palette.css
+  h_bd07e1019ba52e 847-898
+tests/background.test.js
+  h_bd07e1019ba52e 284,376,391-464
+tests/content-iframe.test.js
+  h_bd07e1019ba52e 1-403
+tests/palette-core.test.js
+  h_bd07e1019ba52e 821-860
+tests/palette-ui.test.js
+  h_bd07e1019ba52e 7,219-220,229,258,322,438-542
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d5db5f92e9771593317343d1d9cd961c126b77d",
+  "prompts": {},
+  "humans": {
+    "h_bd07e1019ba52e": {
+      "author": "rayjosong <rayjosong@users.noreply.github.com>"
+    }
+  }
+}
