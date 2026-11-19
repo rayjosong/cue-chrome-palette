@@ -1,0 +1,20 @@
+content.js
+  h_bd07e1019ba52e 12-14,21-112,241,281-285,287,312-319,348
+palette-frame.js
+  h_bd07e1019ba52e 50-51,62-68
+palette-ui.js
+  h_bd07e1019ba52e 2103-2107
+tests/content-iframe.test.js
+  h_bd07e1019ba52e 151-156,167-170,174-179,298,301-304,318-319,416-425,434-493
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9ede62e6046e96f9716867637026b178bda01b21",
+  "prompts": {},
+  "humans": {
+    "h_bd07e1019ba52e": {
+      "author": "rayjosong <rayjosong@users.noreply.github.com>"
+    }
+  }
+}
