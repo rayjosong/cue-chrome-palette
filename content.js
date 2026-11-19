@@ -9,11 +9,106 @@
   let messagePort = null;
   let isClosing = false;
   let closeFallbackTimer = null;
+  let refocusTimer = null;
+  let postReadyFocusTimer = null;
+  let hostGuardsAttached = false;
   let previousActiveElement = null;
   let toastHostEl = null;
   let toastPillEl = null;
   let toastHideTimer = null;
   let toastRemoveTimer = null;
+
+  function isToggleShortcut(e) {
+    const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
+    const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+    return mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "k";
+  }
+
+  function focusIframe() {
+    if (!iframeEl || !hostEl || isClosing) return;
+    try {
+      const active = document.activeElement;
+      if (active && active !== hostEl && active !== iframeEl && typeof active.blur === "function") {
+        active.blur();
+      }
+    } catch (_) {}
+    try {
+      if (typeof window.focus === "function") window.focus();
+    } catch (_) {}
+    try {
+      iframeEl.focus({ preventScroll: true });
+    } catch (_) {
+      try {
+        iframeEl.focus();
+      } catch (_) {}
+    }
+    if (messagePort) {
+      try {
+        messagePort.postMessage({ type: "CUE_FRAME_FOCUS" });
+      } catch (_) {}
+    }
+  }
+
+  function onHostKeyEvent(e) {
+    if (!hostEl || isClosing) return;
+    if (e.type === "keydown" && e.isTrusted && isToggleShortcut(e)) {
+      return;
+    }
+    if (typeof e.preventDefault === "function") e.preventDefault();
+    if (typeof e.stopImmediatePropagation === "function") {
+      e.stopImmediatePropagation();
+    } else if (typeof e.stopPropagation === "function") {
+      e.stopPropagation();
+    }
+    if (e.type === "keydown" && e.key === "Escape") {
+      if (messagePort) {
+        isClosing = true;
+        messagePort.postMessage({ type: "CUE_FRAME_TOGGLE_CLOSE" });
+        clearTimeout(closeFallbackTimer);
+        closeFallbackTimer = setTimeout(closePalette, 250);
+      } else {
+        closePalette();
+      }
+      return;
+    }
+    if (e.type === "keydown") {
+      focusIframe();
+    }
+  }
+
+  function onHostFocusIn(e) {
+    if (!hostEl || !iframeEl || isClosing) return;
+    if (e.target === hostEl || e.target === iframeEl) return;
+    if (refocusTimer) return;
+    refocusTimer = setTimeout(() => {
+      refocusTimer = null;
+      focusIframe();
+    }, 0);
+  }
+
+  function attachHostGuards() {
+    if (hostGuardsAttached) return;
+    hostGuardsAttached = true;
+    for (const evtName of ["keydown", "keyup", "keypress"]) {
+      window.addEventListener(evtName, onHostKeyEvent, true);
+    }
+    window.addEventListener("focusin", onHostFocusIn, true);
+  }
+
+  function detachHostGuards() {
+    clearTimeout(refocusTimer);
+    refocusTimer = null;
+    clearTimeout(postReadyFocusTimer);
+    postReadyFocusTimer = null;
+    if (!hostGuardsAttached) return;
+    hostGuardsAttached = false;
+    if (typeof window.removeEventListener === "function") {
+      for (const evtName of ["keydown", "keyup", "keypress"]) {
+        window.removeEventListener(evtName, onHostKeyEvent, true);
+      }
+      window.removeEventListener("focusin", onHostFocusIn, true);
+    }
+  }
 
   function generateNonce() {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -143,6 +238,7 @@
   function closePalette() {
     clearTimeout(closeFallbackTimer);
     closeFallbackTimer = null;
+    detachHostGuards();
     isClosing = false;
     if (messagePort) {
       try {
@@ -182,7 +278,13 @@
     }
 
     previousActiveElement = document.activeElement;
+    if (previousActiveElement && typeof previousActiveElement.blur === "function") {
+      try {
+        previousActiveElement.blur();
+      } catch (_) {}
+    }
     isClosing = false;
+    attachHostGuards();
     const nonce = generateNonce();
 
     hostEl = document.createElement("div");
@@ -207,9 +309,14 @@
       if (!data || typeof data !== "object") return;
 
       if (data.type === "CUE_FRAME_READY") {
-        try {
-          currentIframe.focus();
-        } catch (_) {}
+        focusIframe();
+        clearTimeout(postReadyFocusTimer);
+        postReadyFocusTimer = setTimeout(() => {
+          postReadyFocusTimer = null;
+          if (hostEl && !isClosing && document.activeElement !== hostEl && document.activeElement !== iframeEl) {
+            focusIframe();
+          }
+        }, 50);
       } else if (data.type === "CUE_FRAME_CLOSE") {
         closePalette();
       } else if (data.type === "CUE_FRAME_TOAST") {
@@ -238,9 +345,7 @@
     "keydown",
     (e) => {
       if (!e.isTrusted) return;
-      const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
-      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
-      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
+      if (isToggleShortcut(e)) {
         e.preventDefault();
         e.stopPropagation();
         openPalette();

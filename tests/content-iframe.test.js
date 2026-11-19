@@ -148,6 +148,12 @@ function createContentHarness() {
       this.focusedCount += 1;
       document.activeElement = this;
     }
+    blur() {
+      this.blurredCount = (this.blurredCount || 0) + 1;
+      if (document.activeElement === this) {
+        document.activeElement = null;
+      }
+    }
   }
 
   const prevInput = new FakeElement("INPUT");
@@ -158,9 +164,19 @@ function createContentHarness() {
   };
 
   const windowObj = {
+    focusCount: 0,
+    focus: () => {
+      windowObj.focusCount += 1;
+    },
     addEventListener: (type, fn) => {
       if (!windowListeners.has(type)) windowListeners.set(type, []);
       windowListeners.get(type).push(fn);
+    },
+    removeEventListener: (type, fn) => {
+      const list = windowListeners.get(type);
+      if (!list) return;
+      const idx = list.indexOf(fn);
+      if (idx !== -1) list.splice(idx, 1);
     }
   };
 
@@ -279,9 +295,13 @@ test("content.js mounts isolated iframe in closed shadow DOM and communicates vi
   const receivedByFrame = [];
   framePort.onmessage = (e) => receivedByFrame.push(e.data);
 
-  // CUE_FRAME_READY over MessageChannel focuses iframe
+  // CUE_FRAME_READY over MessageChannel focuses iframe and notifies frame to focus input
   framePort.postMessage({ type: "CUE_FRAME_READY" });
   assert.equal(iframe.focusedCount, 1);
+  assert.equal(receivedByFrame.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(receivedByFrame[0])), {
+    type: "CUE_FRAME_FOCUS"
+  });
 
   // CUE_FRAME_TOAST over MessageChannel renders floating toast in closed shadow DOM
   framePort.postMessage({ type: "CUE_FRAME_TOAST", toast: "Copied URL", isError: false });
@@ -295,8 +315,8 @@ test("content.js mounts isolated iframe in closed shadow DOM and communicates vi
   // Second TOGGLE_PALETTE sends CUE_FRAME_TOGGLE_CLOSE over MessageChannel port
   const toggleRes = h.sendRuntimeMessage({ type: "TOGGLE_PALETTE" });
   assert.equal(toggleRes.ok, true);
-  assert.equal(receivedByFrame.length, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(receivedByFrame[0])), {
+  assert.equal(receivedByFrame.length, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(receivedByFrame[1])), {
     type: "CUE_FRAME_TOGGLE_CLOSE"
   });
 
@@ -393,6 +413,16 @@ test("palette-frame.js mounts __CueCreatePalette, accepts CUE_FRAME_INIT port, a
     isError: true
   });
 
+  // CUE_FRAME_FOCUS over MessagePort focuses palette
+  ch.port1.postMessage({ type: "CUE_FRAME_FOCUS" });
+  assert.equal(focusCount, 2);
+
+  // Window focus event focuses palette when activeElement is empty/body
+  for (const fn of windowListeners.get("focus") || []) {
+    fn({});
+  }
+  assert.equal(focusCount, 3);
+
   // CUE_FRAME_TOGGLE_CLOSE over MessagePort destroys palette & posts CUE_FRAME_CLOSE
   ch.port1.postMessage({ type: "CUE_FRAME_TOGGLE_CLOSE" });
   assert.equal(destroyCount, 1);
@@ -400,4 +430,64 @@ test("palette-frame.js mounts __CueCreatePalette, accepts CUE_FRAME_INIT port, a
     type: "CUE_FRAME_CLOSE"
   });
   assert.equal(parentPostCalls.length, 0, "palette-frame.js must never call window.parent.postMessage");
+});
+
+test("content.js blocks host-page arrow keys and reclaims focus while palette is open, then detaches on close", () => {
+  const h = createContentHarness();
+  h.sendRuntimeMessage({ type: "TOGGLE_PALETTE" });
+  assert.equal(h.prevInput.blurredCount, 1, "previousActiveElement should be blurred when opening palette");
+
+  const iframe = h.getIframeEl();
+  iframe.dispatchEvent({ type: "load" });
+  const framePort = h.initPosts[0].transfer[0];
+  framePort.postMessage({ type: "CUE_FRAME_READY" });
+  const focusBefore = iframe.focusedCount;
+
+  // ArrowDown hitting host window while palette is open is blocked and refocuses iframe
+  let prevented = false;
+  let stoppedImmediate = false;
+  for (const fn of [...(h.windowListeners.get("keydown") || [])]) {
+    fn({
+      type: "keydown",
+      key: "ArrowDown",
+      isTrusted: true,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      preventDefault: () => {
+        prevented = true;
+      },
+      stopImmediatePropagation: () => {
+        stoppedImmediate = true;
+      }
+    });
+  }
+  assert.equal(prevented, true, "ArrowDown on host window must be prevented while palette is open");
+  assert.equal(stoppedImmediate, true, "ArrowDown on host window must stopImmediatePropagation while palette is open");
+  assert.equal(iframe.focusedCount, focusBefore + 1, "ArrowDown on host window should refocus iframe");
+
+  // Close palette -> host guards are detached and ArrowDown is no longer blocked
+  framePort.postMessage({ type: "CUE_FRAME_CLOSE" });
+  let preventedAfterClose = false;
+  let stoppedAfterClose = false;
+  for (const fn of [...(h.windowListeners.get("keydown") || [])]) {
+    fn({
+      type: "keydown",
+      key: "ArrowDown",
+      isTrusted: true,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      preventDefault: () => {
+        preventedAfterClose = true;
+      },
+      stopImmediatePropagation: () => {
+        stoppedAfterClose = true;
+      }
+    });
+  }
+  assert.equal(preventedAfterClose, false, "ArrowDown must not be prevented after palette closes");
+  assert.equal(stoppedAfterClose, false, "ArrowDown must not be stopped after palette closes");
 });

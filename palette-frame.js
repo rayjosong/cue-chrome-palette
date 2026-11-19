@@ -47,6 +47,8 @@
       if (!msg || typeof msg !== "object") return;
       if (msg.type === "CUE_FRAME_TOGGLE_CLOSE") {
         paletteInstance.destroy();
+      } else if (msg.type === "CUE_FRAME_FOCUS") {
+        paletteInstance.focus();
       }
     };
 
@@ -55,6 +57,13 @@
     }
     port.postMessage({ type: "CUE_FRAME_READY" });
     paletteInstance.focus();
+  });
+
+  window.addEventListener("focus", () => {
+    const active = document.activeElement;
+    if (!active || active === document.body || active === document.documentElement) {
+      paletteInstance.focus();
+    }
   });
 
   // Handle ⌘⇧K / Ctrl+Shift+K when focus is inside the iframe

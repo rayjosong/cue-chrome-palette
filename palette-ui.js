@@ -2100,7 +2100,11 @@
         closeWithMotion();
       },
       focus() {
-        input.focus();
+        if (popoverOpen && popoverInput) {
+          popoverInput.focus();
+        } else {
+          input.focus();
+        }
       }
     };
   };
