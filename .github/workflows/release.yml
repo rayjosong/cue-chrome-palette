@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Verify tag matches manifest version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST_VERSION=$(node -e "console.log(require('./manifest.json').version)")
+          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "Error: tag version ($TAG_VERSION) does not match manifest.json version ($MANIFEST_VERSION)"
+            exit 1
+          fi
+
+      - name: Syntax check JavaScript files
+        run: |
+          for f in *.js tests/*.js; do
+            node --check "$f"
+          done
+
+      - name: Run unit and UI tests
+        run: node --test tests/*.test.js
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Package extension zip
+        run: |
+          ZIP_NAME="cue-chrome-palette-${GITHUB_REF_NAME}.zip"
+          zip -r "$ZIP_NAME" manifest.json *.js *.html *.css
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ZIP_NAME="cue-chrome-palette-${GITHUB_REF_NAME}.zip"
+          gh release create "$GITHUB_REF_NAME" "$ZIP_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

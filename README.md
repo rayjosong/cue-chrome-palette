@@ -79,12 +79,13 @@ See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday workflows
 
 ---
 
-## Install (Unpacked)
+## Install
 
-1. Open `chrome://extensions` in Google Chrome.
-2. Enable **Developer mode**.
-3. Click **Load unpacked** and select this folder.
-4. Press **`⌘ + Shift + K`** (or **`Ctrl + Shift + K`**) on any page, or click the toolbar icon on `chrome://` pages.
+1. Download the latest `cue-chrome-palette-v*.zip` from the [Releases](https://github.com/rayjosong/cue-chrome-palette/releases) page and unzip it (or clone this repository).
+2. Open `chrome://extensions` in Google Chrome.
+3. Enable **Developer mode**.
+4. Click **Load unpacked** and select the unzipped folder.
+5. Press **`⌘ + Shift + K`** (or **`Ctrl + Shift + K`**) on any page, or click the toolbar icon on `chrome://` pages.
 
 ## Tests
 
