@@ -858,3 +858,235 @@ test("analyzeTabs and buildResults surface act-close-idle and act-new-tab-in-gro
   );
   assert.equal(ungroupedRes.items.some((i) => i.id === "act-new-tab-in-group"), false);
 });
+
+test("suggestDomainGroupTitle strips www., maps known brands, and capitalizes labels", () => {
+  assert.equal(Core.suggestDomainGroupTitle("github.com"), "GitHub");
+  assert.equal(Core.suggestDomainGroupTitle("www.github.com"), "GitHub");
+  assert.equal(Core.suggestDomainGroupTitle("gitlab.com"), "GitLab");
+  assert.equal(Core.suggestDomainGroupTitle("youtube.com"), "YouTube");
+  assert.equal(Core.suggestDomainGroupTitle("linkedin.com"), "LinkedIn");
+  assert.equal(Core.suggestDomainGroupTitle("stackoverflow.com"), "StackOverflow");
+  assert.equal(Core.suggestDomainGroupTitle("chatgpt.com"), "ChatGPT");
+  assert.equal(Core.suggestDomainGroupTitle("localhost"), "Localhost");
+  assert.equal(Core.suggestDomainGroupTitle("google.com"), "Google");
+  assert.equal(Core.suggestDomainGroupTitle("www.google.com"), "Google");
+  assert.equal(Core.suggestDomainGroupTitle("mozilla.org"), "Mozilla");
+  assert.equal(Core.suggestDomainGroupTitle("reddit.com"), "Reddit");
+  assert.equal(Core.suggestDomainGroupTitle("wikipedia.org"), "Wikipedia");
+  assert.equal(Core.suggestDomainGroupTitle("figma.com"), "Figma");
+  assert.equal(Core.suggestDomainGroupTitle("notion.so"), "Notion");
+
+  assert.equal(Core.suggestDomainGroupTitle("docs.github.com"), "Docs");
+  assert.equal(Core.suggestDomainGroupTitle("mail.google.com"), "Mail");
+  assert.equal(Core.suggestDomainGroupTitle("acme.io"), "Acme");
+  assert.equal(Core.suggestDomainGroupTitle(""), "");
+  assert.equal(Core.suggestDomainGroupTitle(null), "");
+});
+
+test("formatTabList formats markdown, raw urls, and clean-urls while skipping invalid tabs", () => {
+  const tabs = [
+    { id: 1, title: "Docs [v2]", url: "https://example.com/docs?utm_source=x&id=7" },
+    { id: 2, title: "", url: "https://github.com/org/repo?fbclid=abc" },
+    { id: 3, title: "Missing URL" },
+    { id: 4, title: "Empty URL", url: "   " },
+    null
+  ];
+
+  assert.equal(
+    Core.formatTabList(tabs, "markdown"),
+    "- [Docs \\[v2\\]](https://example.com/docs?utm_source=x&id=7)\n- [https://github.com/org/repo?fbclid=abc](https://github.com/org/repo?fbclid=abc)"
+  );
+  assert.equal(
+    Core.formatTabList(tabs),
+    "- [Docs \\[v2\\]](https://example.com/docs?utm_source=x&id=7)\n- [https://github.com/org/repo?fbclid=abc](https://github.com/org/repo?fbclid=abc)"
+  );
+  assert.equal(
+    Core.formatTabList(tabs, "urls"),
+    "https://example.com/docs?utm_source=x&id=7\nhttps://github.com/org/repo?fbclid=abc"
+  );
+  assert.equal(
+    Core.formatTabList(tabs, "clean-urls"),
+    "https://example.com/docs?id=7\nhttps://github.com/org/repo"
+  );
+  assert.equal(Core.formatTabList([], "markdown"), "");
+});
+
+test("analyzeTabs computes ungroupedBaseDomainGroups, discardable tab sets, and left/right tab IDs", () => {
+  const now = Date.now();
+  const activeTab = { id: 3, index: 2, url: "https://notion.so/page", currentWindow: true, active: true, pinned: false, groupId: -1 };
+  const tabs = [
+    // Out of strip order on purpose to verify index-based ordering
+    { id: 6, index: 5, url: "https://reddit.com/r/js", currentWindow: true, active: false, pinned: false, groupId: -1, audible: false, discarded: false, lastAccessed: now - 90 * 60 * 1000 },
+    { id: 1, index: 0, url: "https://github.com/pinned", currentWindow: true, active: false, pinned: true, groupId: -1, audible: false, discarded: false, lastAccessed: now - 90 * 60 * 1000 },
+    { id: 2, index: 1, url: "https://github.com/a", currentWindow: true, active: false, pinned: false, groupId: -1, audible: false, discarded: true, lastAccessed: now - 90 * 60 * 1000 },
+    activeTab,
+    { id: 4, index: 3, url: "https://docs.github.com/b", currentWindow: true, active: false, pinned: false, groupId: -1, audible: true, discarded: false, lastAccessed: now - 90 * 60 * 1000 },
+    { id: 5, index: 4, url: "https://reddit.com/r/ts", currentWindow: true, active: false, pinned: false, groupId: -1, audible: false, discarded: false, lastAccessed: now - 5 * 60 * 1000 },
+    { id: 7, index: 6, url: "https://reddit.com/r/web", currentWindow: true, active: false, pinned: false, groupId: 10, audible: false, discarded: false, lastAccessed: now - 90 * 60 * 1000 },
+    { id: 8, index: 7, url: "https://figma.com/file/1", currentWindow: true, active: false, pinned: false, groupId: -1, audible: false, discarded: false, lastAccessed: now - 90 * 60 * 1000 },
+    { id: 9, index: 8, url: "https://pinned-right.com", currentWindow: true, active: false, pinned: true, groupId: -1, audible: false, discarded: false, lastAccessed: now - 90 * 60 * 1000 }
+  ];
+
+  const analysis = Core.analyzeTabs(tabs, activeTab, { now, idleMinutes: 60 });
+
+  // ungroupedBaseDomainGroups: github.com (2, 4 -> count 2) and reddit.com (6, 5 -> count 2; tab 7 is grouped so excluded), pinned tab 1 excluded
+  assert.equal(analysis.ungroupedBaseDomainGroups.length, 2);
+  assert.equal(analysis.autoGroupTabCount, 4);
+  const ghGroup = analysis.ungroupedBaseDomainGroups.find((g) => g.baseDomain === "github.com");
+  const redditGroup = analysis.ungroupedBaseDomainGroups.find((g) => g.baseDomain === "reddit.com");
+  assert.deepEqual(ghGroup, { baseDomain: "github.com", title: "GitHub", tabIds: [2, 4], count: 2 });
+  assert.deepEqual(redditGroup, { baseDomain: "reddit.com", title: "Reddit", tabIds: [6, 5], count: 2 });
+
+  // idleTabIds: unpinned, non-active, non-audible, old lastAccessed -> 2 (discarded), 6, 7, 8
+  assert.deepEqual(analysis.idleTabIds, [6, 2, 7, 8]);
+  // discardableIdleTabIds excludes already discarded tab 2
+  assert.deepEqual(analysis.discardableIdleTabIds, [6, 7, 8]);
+  // discardableOtherTabIds: unpinned, non-active, non-audible, non-discarded -> 6, 5, 7, 8
+  assert.deepEqual(analysis.discardableOtherTabIds, [6, 5, 7, 8]);
+
+  // tabsToRightIds & tabsToLeftIds using numeric index, excluding pinned tabs (1 and 9)
+  assert.deepEqual(analysis.tabsToLeftIds, [2]);
+  assert.deepEqual(analysis.tabsToRightIds, [4, 5, 6, 7, 8]);
+
+  // Fallback to array position when index is omitted
+  const noIdxTabs = [
+    { id: 10, url: "https://a.com", pinned: true, currentWindow: true },
+    { id: 11, url: "https://b.com", pinned: false, currentWindow: true },
+    { id: 12, url: "https://c.com", pinned: false, currentWindow: true },
+    { id: 13, url: "https://d.com", pinned: false, currentWindow: true },
+    { id: 14, url: "https://e.com", pinned: true, currentWindow: true }
+  ];
+  const fallbackAnalysis = Core.analyzeTabs(noIdxTabs, noIdxTabs[2]);
+  assert.deepEqual(fallbackAnalysis.tabsToLeftIds, [11]);
+  assert.deepEqual(fallbackAnalysis.tabsToRightIds, [13]);
+});
+
+test("buildStaticActions exposes auto-group, copy window/group, bookmark group, suspend, sort, and close-right actions", () => {
+  const now = Date.now();
+  const activeTab = {
+    id: 1,
+    index: 0,
+    windowId: 10,
+    title: "GitHub Issues",
+    url: "https://github.com/issues?utm_source=ref",
+    groupId: 7,
+    currentWindow: true,
+    active: true
+  };
+  const tabs = [
+    activeTab,
+    { id: 2, index: 1, windowId: 10, title: "GitHub PRs", url: "https://github.com/pulls", groupId: 7, currentWindow: true, active: false, pinned: false, audible: false, discarded: false, lastAccessed: now - 90 * 60 * 1000 },
+    { id: 3, index: 2, windowId: 10, title: "Google Search", url: "https://google.com/search?q=1", groupId: -1, currentWindow: true, active: false, pinned: false, audible: false, discarded: false, lastAccessed: now - 90 * 60 * 1000 },
+    { id: 4, index: 3, windowId: 10, title: "Google Docs", url: "https://docs.google.com/d/1", groupId: -1, currentWindow: true, active: false, pinned: false, audible: false, discarded: true, lastAccessed: now - 90 * 60 * 1000 },
+    { id: 5, index: 4, windowId: 10, title: "Reddit Home", url: "https://reddit.com", groupId: -1, currentWindow: true, active: false, pinned: false, audible: false, discarded: false, lastAccessed: now - 5 * 60 * 1000 },
+    { id: 6, index: 5, windowId: 10, title: "Reddit JS", url: "https://reddit.com/r/javascript", groupId: -1, currentWindow: true, active: false, pinned: false, audible: false, discarded: false, lastAccessed: now - 5 * 60 * 1000 },
+    { id: 7, index: 0, windowId: 20, title: "Other Win", url: "https://other.com", groupId: -1, currentWindow: false, active: false }
+  ];
+  const tabGroups = [{ id: 7, title: "Dev Work", color: "blue", currentWindow: true, tabCount: 2 }];
+
+  const analysis = Core.analyzeTabs(tabs, activeTab, { now, idleMinutes: 60 });
+  const actions = Core.buildStaticActions(activeTab, analysis, { tabs, tabGroups });
+
+  // 1. Auto-Group Ungrouped Tabs by Website
+  const autoGroup = actions.find((a) => a.id === "act-auto-group-domains");
+  assert.ok(autoGroup, "act-auto-group-domains should be present");
+  assert.equal(autoGroup.title, "Auto-Group Ungrouped Tabs by Website (4 tabs in 2 groups)");
+  assert.equal(autoGroup.subtitle, "Automatically group ungrouped tabs sharing a website (Google, Reddit)");
+  assert.equal(autoGroup.priority, 13.2);
+  assert.deepEqual(autoGroup.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "AUTO_GROUP_BY_DOMAIN" }
+  });
+
+  // 2. Copy Window Markdown & URLs (current window has 6 tabs)
+  const copyWinMd = actions.find((a) => a.id === "act-copy-window-markdown");
+  assert.ok(copyWinMd);
+  assert.equal(copyWinMd.title, "Copy All Window Tabs as Markdown (6)");
+  assert.equal(copyWinMd.actionDescriptor.type, "COPY_TEXT");
+  assert.equal(copyWinMd.actionDescriptor.toast, "Copied 6 tabs as Markdown");
+  assert.ok(copyWinMd.actionDescriptor.text.includes("- [GitHub Issues](https://github.com/issues?utm_source=ref)"));
+  assert.ok(!copyWinMd.actionDescriptor.text.includes("Other Win"));
+
+  const copyWinUrls = actions.find((a) => a.id === "act-copy-window-urls");
+  assert.ok(copyWinUrls);
+  assert.equal(copyWinUrls.title, "Copy All Window Tab URLs (6)");
+  assert.equal(copyWinUrls.actionDescriptor.toast, "Copied 6 tab URLs");
+  assert.ok(copyWinUrls.actionDescriptor.text.includes("https://github.com/issues\n"));
+
+  // 3. Copy Group Markdown / URLs & Save Group to Bookmarks
+  const copyGrpMd = actions.find((a) => a.id === "act-copy-group-markdown");
+  assert.ok(copyGrpMd);
+  assert.equal(copyGrpMd.title, "Copy Current Group Tabs as Markdown (2)");
+  assert.equal(copyGrpMd.subtitle, 'Copy all tabs in "Dev Work" as a Markdown list');
+  assert.equal(copyGrpMd.actionDescriptor.toast, "Copied 2 group tabs as Markdown");
+  assert.equal(
+    copyGrpMd.actionDescriptor.text,
+    "- [GitHub Issues](https://github.com/issues?utm_source=ref)\n- [GitHub PRs](https://github.com/pulls)"
+  );
+
+  const copyGrpUrls = actions.find((a) => a.id === "act-copy-group-urls");
+  assert.ok(copyGrpUrls);
+  assert.equal(copyGrpUrls.title, "Copy Current Group Tab URLs (2)");
+  assert.equal(copyGrpUrls.actionDescriptor.text, "https://github.com/issues\nhttps://github.com/pulls");
+
+  const bookmarkGrp = actions.find((a) => a.id === "act-bookmark-group");
+  assert.ok(bookmarkGrp);
+  assert.equal(bookmarkGrp.title, "Save Current Group to Bookmarks");
+  assert.equal(bookmarkGrp.subtitle, 'Save all 2 tabs in "Dev Work" into a bookmark folder');
+  assert.deepEqual(bookmarkGrp.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "BOOKMARK_TAB_GROUP", groupId: 7 }
+  });
+
+  // 4. Suspend Idle Tabs & Suspend Other Background Tabs (tab 4 is discarded, so 2 idle: tabs 2 & 3; 4 others: 2, 3, 5, 6)
+  const discardIdle = actions.find((a) => a.id === "act-discard-idle");
+  assert.ok(discardIdle);
+  assert.equal(discardIdle.title, "Suspend Idle Tabs (2)");
+  assert.equal(discardIdle.badge, "2 Idle");
+  assert.equal(discardIdle.priority, 13.8);
+  assert.deepEqual(discardIdle.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "DISCARD_IDLE_TABS", idleMinutes: 60 }
+  });
+
+  const discardOthers = actions.find((a) => a.id === "act-discard-others");
+  assert.ok(discardOthers);
+  assert.equal(discardOthers.title, "Suspend Other Background Tabs (4)");
+  assert.deepEqual(discardOthers.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "DISCARD_OTHER_TABS" }
+  });
+
+  // 5. Sort Tabs by Website
+  const sortTabs = actions.find((a) => a.id === "act-sort-tabs");
+  assert.ok(sortTabs);
+  assert.equal(sortTabs.title, "Sort Tabs by Website");
+  assert.deepEqual(sortTabs.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "SORT_TABS_BY_DOMAIN" }
+  });
+
+  // 6. Close Tabs to the Right (5 unpinned tabs to the right of index 0)
+  const closeRight = actions.find((a) => a.id === "act-close-tabs-right");
+  assert.ok(closeRight);
+  assert.equal(closeRight.title, "Close Tabs to the Right (5)");
+  assert.deepEqual(closeRight.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "CLOSE_TABS_TO_RIGHT" }
+  });
+
+  // Verify conditional actions disappear / fall back when counts are zero or ungrouped
+  const singleTab = { id: 99, index: 0, title: "Solo", url: "https://solo.com", groupId: -1, currentWindow: true, active: true };
+  const minimalAnalysis = Core.analyzeTabs([singleTab], singleTab, { now, idleMinutes: 60 });
+  const minimalActions = Core.buildStaticActions(singleTab, minimalAnalysis, { tabs: [singleTab] });
+
+  assert.equal(minimalActions.find((a) => a.id === "act-auto-group-domains"), undefined);
+  assert.equal(minimalActions.find((a) => a.id === "act-copy-group-markdown"), undefined);
+  assert.equal(minimalActions.find((a) => a.id === "act-copy-group-urls"), undefined);
+  assert.equal(minimalActions.find((a) => a.id === "act-bookmark-group"), undefined);
+  assert.equal(minimalActions.find((a) => a.id === "act-close-tabs-right"), undefined);
+  assert.equal(minimalActions.find((a) => a.id === "act-discard-idle").title, "Suspend Idle Tabs (Memory Saver)");
+  assert.equal(minimalActions.find((a) => a.id === "act-discard-idle").priority, 9.1);
+  assert.equal(minimalActions.find((a) => a.id === "act-discard-others").title, "Suspend Other Background Tabs");
+});
+

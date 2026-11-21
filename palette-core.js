@@ -120,6 +120,42 @@
     return `[${safeTitle}](${url || ""})`;
   }
 
+  const KNOWN_BRAND_TITLES = {
+    github: "GitHub",
+    gitlab: "GitLab",
+    youtube: "YouTube",
+    linkedin: "LinkedIn",
+    stackoverflow: "StackOverflow",
+    chatgpt: "ChatGPT",
+    localhost: "Localhost",
+    google: "Google",
+    mozilla: "Mozilla",
+    reddit: "Reddit",
+    wikipedia: "Wikipedia",
+    figma: "Figma",
+    notion: "Notion"
+  };
+
+  function suggestDomainGroupTitle(hostnameOrDomain = "") {
+    if (!hostnameOrDomain || typeof hostnameOrDomain !== "string") return "";
+    const cleanHost = hostnameOrDomain.trim().replace(/^www\./i, "");
+    if (!cleanHost) return "";
+    const base = cleanHost.split(".")[0] || cleanHost;
+    return KNOWN_BRAND_TITLES[base.toLowerCase()] || base.charAt(0).toUpperCase() + base.slice(1);
+  }
+
+  function formatTabList(tabs = [], format = "markdown") {
+    if (!Array.isArray(tabs)) return "";
+    const validTabs = tabs.filter((t) => t && typeof t.url === "string" && t.url.trim().length > 0);
+    if (format === "urls") {
+      return validTabs.map((t) => t.url).join("\n");
+    }
+    if (format === "clean-urls") {
+      return validTabs.map((t) => stripTrackingParams(t.url)).join("\n");
+    }
+    return validTabs.map((t) => `- ${formatMarkdownLink(t.title || t.url, t.url)}`).join("\n");
+  }
+
   function extractHostname(rawUrl = "") {
     if (!rawUrl || typeof rawUrl !== "string") return "";
     try {
@@ -491,10 +527,21 @@
     const idleCutoff = now - idleMinutes * 60 * 1000;
 
     const idleTabIds = [];
+    const discardableIdleTabIds = [];
     for (const t of targetTabs) {
       if (t.active || t.pinned || t.audible) continue;
       if (t.lastAccessed > 0 && t.lastAccessed <= idleCutoff) {
         idleTabIds.push(t.id);
+        if (!t.discarded) {
+          discardableIdleTabIds.push(t.id);
+        }
+      }
+    }
+
+    const discardableOtherTabIds = [];
+    for (const t of targetTabs) {
+      if (!t.active && !(activeTab && t.id === activeTab.id) && !t.pinned && !t.audible && !t.discarded) {
+        discardableOtherTabIds.push(t.id);
       }
     }
 
@@ -529,21 +576,7 @@
       }
     }
 
-    let suggestedGroupTitle = "";
-    if (activeDomain) {
-      const cleanHost = activeDomain.replace(/^www\./, "");
-      const base = cleanHost.split(".")[0] || cleanHost;
-      const knownBrands = {
-        github: "GitHub",
-        gitlab: "GitLab",
-        youtube: "YouTube",
-        linkedin: "LinkedIn",
-        stackoverflow: "StackOverflow",
-        chatgpt: "ChatGPT",
-        localhost: "Localhost"
-      };
-      suggestedGroupTitle = knownBrands[base.toLowerCase()] || base.charAt(0).toUpperCase() + base.slice(1);
-    }
+    const suggestedGroupTitle = activeDomain ? suggestDomainGroupTitle(activeDomain) : "";
 
     const activeBaseDomain = activeTab ? extractBaseDomain(activeTab.url) : "";
     const baseDomainTabIds = [];
@@ -556,6 +589,7 @@
     }
 
     const baseDomainMap = new Map();
+    const ungroupedBaseDomainMap = new Map();
     for (const t of targetTabs) {
       const bd = extractBaseDomain(t.url);
       if (!bd) continue;
@@ -563,6 +597,13 @@
         baseDomainMap.set(bd, []);
       }
       baseDomainMap.get(bd).push(t.id);
+
+      if (!t.pinned && (t.groupId == null || t.groupId === -1)) {
+        if (!ungroupedBaseDomainMap.has(bd)) {
+          ungroupedBaseDomainMap.set(bd, []);
+        }
+        ungroupedBaseDomainMap.get(bd).push(t.id);
+      }
     }
 
     const baseDomainGroups = [];
@@ -572,6 +613,57 @@
       }
     }
     baseDomainGroups.sort((a, b) => b.count - a.count);
+
+    const ungroupedBaseDomainGroups = [];
+    let autoGroupTabCount = 0;
+    for (const [baseDomain, tabIds] of ungroupedBaseDomainMap.entries()) {
+      if (tabIds.length >= 2) {
+        ungroupedBaseDomainGroups.push({
+          baseDomain,
+          title: suggestDomainGroupTitle(baseDomain),
+          tabIds,
+          count: tabIds.length
+        });
+        autoGroupTabCount += tabIds.length;
+      }
+    }
+    ungroupedBaseDomainGroups.sort((a, b) => b.count - a.count);
+
+    const tabsToRightIds = [];
+    const tabsToLeftIds = [];
+    if (activeTab) {
+      const activePos = targetTabs.findIndex((t) => t.id === activeTab.id);
+      if (activePos !== -1) {
+        const activeObj = targetTabs[activePos];
+        const activeIdx =
+          typeof activeTab.index === "number"
+            ? activeTab.index
+            : typeof activeObj.index === "number"
+              ? activeObj.index
+              : null;
+        const allHaveIndex = activeIdx !== null && targetTabs.every((t) => typeof t.index === "number");
+        if (allHaveIndex) {
+          const rightTabs = targetTabs
+            .filter((t) => !t.pinned && t.index > activeIdx)
+            .sort((a, b) => a.index - b.index);
+          const leftTabs = targetTabs
+            .filter((t) => !t.pinned && t.index < activeIdx)
+            .sort((a, b) => a.index - b.index);
+          for (const t of rightTabs) tabsToRightIds.push(t.id);
+          for (const t of leftTabs) tabsToLeftIds.push(t.id);
+        } else {
+          for (let i = 0; i < targetTabs.length; i++) {
+            const t = targetTabs[i];
+            if (t.pinned || i === activePos) continue;
+            if (i > activePos) {
+              tabsToRightIds.push(t.id);
+            } else {
+              tabsToLeftIds.push(t.id);
+            }
+          }
+        }
+      }
+    }
 
     return {
       duplicateTabIds,
@@ -584,9 +676,15 @@
       baseDomainTabIds,
       baseDomainCount: baseDomainTabIds.length,
       baseDomainGroups,
+      ungroupedBaseDomainGroups,
+      autoGroupTabCount,
       idleTabIds,
       idleCount: idleTabIds.length,
-      idleMinutes
+      idleMinutes,
+      discardableIdleTabIds,
+      discardableOtherTabIds,
+      tabsToRightIds,
+      tabsToLeftIds
     };
   }
 
@@ -716,10 +814,12 @@
           }
         },
         ...(activeTab.groupId !== undefined && activeTab.groupId !== -1
-          ? [
-              (() => {
-                const currentGroup = (contextData?.tabGroups || []).find((g) => g.id === activeTab.groupId);
-                return {
+          ? (() => {
+              const currentGroup = (contextData?.tabGroups || []).find((g) => g.id === activeTab.groupId);
+              const groupTabs = allTabs.filter((t) => t.groupId === activeTab.groupId);
+              const groupTitle = currentGroup?.title || "Current Group";
+              return [
+                {
                   id: "act-new-tab-in-group",
                   kind: "action",
                   section: "Actions",
@@ -736,24 +836,80 @@
                     type: "EXECUTE_ACTION",
                     payload: { action: "NEW_TAB_IN_GROUP", groupId: activeTab.groupId, windowId: activeTab.windowId }
                   }
-                };
-              })(),
-              {
-                id: "act-ungroup",
-                kind: "action",
-                section: "Actions",
-                title: "Ungroup Current Tab",
-                subtitle: "Remove this tab from its tab group",
-                badge: "Action",
-                badgeClass: "qc-badge-action",
-                iconClass: "qc-icon-action",
-                iconName: "layers",
-                enterVerb: "Run",
-                priority: 11,
-                searchText: "ungroup current tab remove from group",
-                actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "UNGROUP_CURRENT_TAB" } }
-              }
-            ]
+                },
+                {
+                  id: "act-copy-group-markdown",
+                  kind: "action",
+                  section: "Actions",
+                  title: `Copy Current Group Tabs as Markdown (${groupTabs.length})`,
+                  subtitle: `Copy all tabs in "${groupTitle}" as a Markdown list`,
+                  badge: "Group",
+                  badgeClass: "qc-badge-group",
+                  iconClass: "qc-icon-group",
+                  iconName: "copy",
+                  enterVerb: "Copy",
+                  priority: 11.2,
+                  searchText: "copy current group tabs as markdown list export",
+                  actionDescriptor: {
+                    type: "COPY_TEXT",
+                    text: formatTabList(groupTabs, "markdown"),
+                    toast: `Copied ${groupTabs.length} group tabs as Markdown`
+                  }
+                },
+                {
+                  id: "act-copy-group-urls",
+                  kind: "action",
+                  section: "Actions",
+                  title: `Copy Current Group Tab URLs (${groupTabs.length})`,
+                  subtitle: `Copy clean URLs for all tabs in "${groupTitle}"`,
+                  badge: "Group",
+                  badgeClass: "qc-badge-group",
+                  iconClass: "qc-icon-group",
+                  iconName: "link",
+                  enterVerb: "Copy",
+                  priority: 11.15,
+                  searchText: "copy current group tab urls links list export",
+                  actionDescriptor: {
+                    type: "COPY_TEXT",
+                    text: formatTabList(groupTabs, "clean-urls"),
+                    toast: `Copied ${groupTabs.length} group tab URLs`
+                  }
+                },
+                {
+                  id: "act-bookmark-group",
+                  kind: "action",
+                  section: "Actions",
+                  title: "Save Current Group to Bookmarks",
+                  subtitle: `Save all ${groupTabs.length} tabs in "${groupTitle}" into a bookmark folder`,
+                  badge: "Bookmark",
+                  badgeClass: "qc-badge-bookmark",
+                  iconClass: "qc-icon-bookmark",
+                  iconName: "star",
+                  enterVerb: "Save",
+                  priority: 11.1,
+                  searchText: "save export current tab group to bookmark folder archive",
+                  actionDescriptor: {
+                    type: "EXECUTE_ACTION",
+                    payload: { action: "BOOKMARK_TAB_GROUP", groupId: activeTab.groupId }
+                  }
+                },
+                {
+                  id: "act-ungroup",
+                  kind: "action",
+                  section: "Actions",
+                  title: "Ungroup Current Tab",
+                  subtitle: "Remove this tab from its tab group",
+                  badge: "Action",
+                  badgeClass: "qc-badge-action",
+                  iconClass: "qc-icon-action",
+                  iconName: "layers",
+                  enterVerb: "Run",
+                  priority: 11,
+                  searchText: "ungroup current tab remove from group",
+                  actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "UNGROUP_CURRENT_TAB" } }
+                }
+              ];
+            })()
           : []),
         {
           id: "act-pin",
@@ -1004,6 +1160,95 @@
           }
         });
       }
+
+      const tabsToRightIds = analysis?.tabsToRightIds || [];
+      if (tabsToRightIds.length > 0) {
+        actions.push({
+          id: "act-close-tabs-right",
+          kind: "action",
+          section: "Actions",
+          title: `Close Tabs to the Right (${tabsToRightIds.length})`,
+          subtitle: `Close ${tabsToRightIds.length} unpinned ${tabsToRightIds.length === 1 ? "tab" : "tabs"} to the right of the current tab`,
+          badge: "Cleanup",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "x",
+          enterVerb: "Close",
+          priority: 9.22,
+          searchText: "close tabs to the right after current tab cleanup",
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: { action: "CLOSE_TABS_TO_RIGHT" }
+          }
+        });
+      }
+    }
+
+    const currentWindowTabs = allTabs.filter((t) => t.currentWindow !== false);
+    const windowTabs = currentWindowTabs.length > 0 ? currentWindowTabs : allTabs;
+    if (windowTabs.length > 0) {
+      actions.push(
+        {
+          id: "act-copy-window-markdown",
+          kind: "action",
+          section: "Actions",
+          title: `Copy All Window Tabs as Markdown (${windowTabs.length})`,
+          subtitle: `Copy ${windowTabs.length} open ${windowTabs.length === 1 ? "tab" : "tabs"} as a Markdown bullet list`,
+          badge: "Copy",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "copy",
+          enterVerb: "Copy",
+          priority: 9.35,
+          searchText: "copy all window tabs as markdown list links export share",
+          actionDescriptor: {
+            type: "COPY_TEXT",
+            text: formatTabList(windowTabs, "markdown"),
+            toast: `Copied ${windowTabs.length} tabs as Markdown`
+          }
+        },
+        {
+          id: "act-copy-window-urls",
+          kind: "action",
+          section: "Actions",
+          title: `Copy All Window Tab URLs (${windowTabs.length})`,
+          subtitle: `Copy ${windowTabs.length} clean tab URLs separated by newlines`,
+          badge: "Copy",
+          badgeClass: "qc-badge-action",
+          iconClass: "qc-icon-action",
+          iconName: "link",
+          enterVerb: "Copy",
+          priority: 9.25,
+          searchText: "copy all window tab urls links list export",
+          actionDescriptor: {
+            type: "COPY_TEXT",
+            text: formatTabList(windowTabs, "clean-urls"),
+            toast: `Copied ${windowTabs.length} tab URLs`
+          }
+        }
+      );
+    }
+
+    const ungroupedBaseDomainGroups = analysis?.ungroupedBaseDomainGroups || [];
+    if (ungroupedBaseDomainGroups.length > 0) {
+      actions.push({
+        id: "act-auto-group-domains",
+        kind: "action",
+        section: "Actions",
+        title: `Auto-Group Ungrouped Tabs by Website (${analysis.autoGroupTabCount} tabs in ${ungroupedBaseDomainGroups.length} ${ungroupedBaseDomainGroups.length === 1 ? "group" : "groups"})`,
+        subtitle: `Automatically group ungrouped tabs sharing a website (${ungroupedBaseDomainGroups.slice(0, 3).map((g) => g.title).join(", ")}${ungroupedBaseDomainGroups.length > 3 ? "…" : ""})`,
+        badge: "Organize",
+        badgeClass: "qc-badge-action",
+        iconClass: "qc-icon-action",
+        iconName: "layers",
+        enterVerb: "Auto-Group",
+        priority: 13.2,
+        searchText: "auto group all ungrouped tabs by website domain organize cluster",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "AUTO_GROUP_BY_DOMAIN" }
+        }
+      });
     }
 
     if (analysis.activeDomain && analysis.domainCount > 1) {
@@ -1119,7 +1364,74 @@
       }
     }
 
+    const discardableIdleTabIds = analysis?.discardableIdleTabIds || [];
+    const discardableOtherTabIds = analysis?.discardableOtherTabIds || [];
+    const idleMinutes = analysis?.idleMinutes ?? 60;
+
     actions.push(
+      {
+        id: "act-discard-idle",
+        kind: "action",
+        section: "Actions",
+        title:
+          discardableIdleTabIds.length > 0
+            ? `Suspend Idle Tabs (${discardableIdleTabIds.length})`
+            : "Suspend Idle Tabs (Memory Saver)",
+        subtitle:
+          discardableIdleTabIds.length > 0
+            ? `Discard ${discardableIdleTabIds.length} inactive ${discardableIdleTabIds.length === 1 ? "tab" : "tabs"} (${idleMinutes}+ min) to free memory without closing`
+            : `Free memory for tabs inactive for ${idleMinutes}+ min without closing them`,
+        badge: discardableIdleTabIds.length > 0 ? `${discardableIdleTabIds.length} Idle` : "Memory",
+        badgeClass: "qc-badge-action",
+        iconClass: "qc-icon-action",
+        iconName: "zap",
+        enterVerb: "Suspend",
+        priority: discardableIdleTabIds.length > 0 ? 13.8 : 9.1,
+        searchText: "suspend discard idle tabs sleep memory saver hibernate",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "DISCARD_IDLE_TABS", idleMinutes }
+        }
+      },
+      {
+        id: "act-discard-others",
+        kind: "action",
+        section: "Actions",
+        title:
+          discardableOtherTabIds.length > 0
+            ? `Suspend Other Background Tabs (${discardableOtherTabIds.length})`
+            : "Suspend Other Background Tabs",
+        subtitle: "Free memory by suspending all other non-audible background tabs in this window",
+        badge: "Memory",
+        badgeClass: "qc-badge-action",
+        iconClass: "qc-icon-action",
+        iconName: "zap",
+        enterVerb: "Suspend",
+        priority: 9.05,
+        searchText: "suspend discard other background tabs sleep memory saver hibernate",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "DISCARD_OTHER_TABS" }
+        }
+      },
+      {
+        id: "act-sort-tabs",
+        kind: "action",
+        section: "Actions",
+        title: "Sort Tabs by Website",
+        subtitle: "Order unpinned tabs in this window alphabetically by website and title",
+        badge: "Organize",
+        badgeClass: "qc-badge-action",
+        iconClass: "qc-icon-action",
+        iconName: "layers",
+        enterVerb: "Sort",
+        priority: 9.12,
+        searchText: "sort order arrange tabs by website domain title alphabetically",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "SORT_TABS_BY_DOMAIN" }
+        }
+      },
       {
         id: "act-close-dups",
         kind: "action",
@@ -1813,6 +2125,8 @@
     normalizeUrlForDedup,
     stripTrackingParams,
     formatMarkdownLink,
+    suggestDomainGroupTitle,
+    formatTabList,
     extractHostname,
     extractBaseDomain,
     parseModeAndQuery,
