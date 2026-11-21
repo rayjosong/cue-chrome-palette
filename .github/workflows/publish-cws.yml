@@ -1,0 +1,153 @@
+name: Publish to Chrome Web Store
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish extension after upload (uncheck to upload draft only)"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Package extension zip
+        id: package
+        run: |
+          VERSION=$(node -e "console.log(require('./manifest.json').version)")
+          ZIP_NAME="cue-chrome-palette-v${VERSION}.zip"
+          zip -r "$ZIP_NAME" manifest.json *.js *.html *.css
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Check Chrome Web Store secrets
+        id: cws-check
+        env:
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        run: |
+          missing=()
+          for var in CWS_EXTENSION_ID CWS_CLIENT_ID CWS_CLIENT_SECRET CWS_REFRESH_TOKEN; do
+            if [ -z "${!var}" ]; then
+              missing+=("$var")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            missing_list="${missing[*]}"
+            echo "::notice::Chrome Web Store secrets are not configured (missing: ${missing_list}). Skipping Chrome Web Store upload and publish."
+            {
+              echo "### Chrome Web Store Publish Skipped"
+              echo "Missing repository secrets: \`${missing_list}\`."
+              echo "Configure \`CWS_EXTENSION_ID\`, \`CWS_CLIENT_ID\`, \`CWS_CLIENT_SECRET\`, and \`CWS_REFRESH_TOKEN\` in repository settings to enable automated Chrome Web Store publishing."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload and publish to Chrome Web Store
+        if: steps.cws-check.outputs.configured == 'true'
+        env:
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          ZIP_NAME: ${{ steps.package.outputs.zip_name }}
+          SHOULD_PUBLISH: ${{ github.event_name == 'release' || inputs.publish }}
+        run: |
+          node <<'EOF'
+            const fs = require("node:fs");
+
+            async function run() {
+              const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({
+                  client_id: process.env.CWS_CLIENT_ID,
+                  client_secret: process.env.CWS_CLIENT_SECRET,
+                  refresh_token: process.env.CWS_REFRESH_TOKEN,
+                  grant_type: "refresh_token"
+                })
+              });
+
+              if (!tokenRes.ok) {
+                const body = await tokenRes.text();
+                throw new Error(`OAuth token exchange failed (${tokenRes.status}): ${body}`);
+              }
+
+              const { access_token: accessToken } = await tokenRes.json();
+              if (!accessToken) {
+                throw new Error("OAuth token response did not include access_token");
+              }
+
+              const itemId = encodeURIComponent(process.env.CWS_EXTENSION_ID);
+              const zipBytes = fs.readFileSync(process.env.ZIP_NAME);
+
+              const uploadRes = await fetch(
+                `https://www.googleapis.com/upload/chromewebstore/v1.1/items/${itemId}`,
+                {
+                  method: "PUT",
+                  headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "x-goog-api-version": "2",
+                    "Content-Type": "application/zip"
+                  },
+                  body: zipBytes
+                }
+              );
+
+              const uploadData = await uploadRes.json().catch(() => ({}));
+              if (!uploadRes.ok || uploadData.uploadState === "FAILURE") {
+                throw new Error(
+                  `Chrome Web Store upload failed (${uploadRes.status}): ${JSON.stringify(uploadData)}`
+                );
+              }
+              console.log("Chrome Web Store upload state:", uploadData.uploadState);
+
+              if (process.env.SHOULD_PUBLISH === "true") {
+                const publishRes = await fetch(
+                  `https://www.googleapis.com/chromewebstore/v1.1/items/${itemId}/publish`,
+                  {
+                    method: "POST",
+                    headers: {
+                      Authorization: `Bearer ${accessToken}`,
+                      "x-goog-api-version": "2",
+                      "Content-Length": "0"
+                    }
+                  }
+                );
+
+                const publishData = await publishRes.json().catch(() => ({}));
+                if (!publishRes.ok) {
+                  throw new Error(
+                    `Chrome Web Store publish failed (${publishRes.status}): ${JSON.stringify(publishData)}`
+                  );
+                }
+                console.log("Chrome Web Store publish status:", JSON.stringify(publishData.status));
+              } else {
+                console.log("Publish skipped (draft uploaded only).");
+              }
+            }
+
+            run().catch((err) => {
+              console.error(err);
+              process.exit(1);
+            });
+          EOF

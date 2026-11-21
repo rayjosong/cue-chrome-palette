@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional version to bump to (e.g., 1.2.0 or v1.2.0). Leave empty to release current manifest.json version."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -11,6 +17,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      bumped: ${{ steps.resolve.outputs.bumped }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -20,14 +30,64 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Verify tag matches manifest version
+      - name: Resolve and validate release version
+        id: resolve
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          MANIFEST_VERSION=$(node -e "console.log(require('./manifest.json').version)")
-          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
-            echo "Error: tag version ($TAG_VERSION) does not match manifest.json version ($MANIFEST_VERSION)"
-            exit 1
-          fi
+          node <<'EOF'
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const currentVersion = manifest.version;
+            const semverRe = /^\d+\.\d+\.\d+$/;
+            const outputPath = process.env.GITHUB_OUTPUT;
+
+            let targetVersion;
+            let bumped = false;
+
+            if (process.env.EVENT_NAME === "push") {
+              const tagVersion = (process.env.REF_NAME || "").replace(/^v/, "");
+              if (!semverRe.test(tagVersion)) {
+                console.error(`Error: tag version "${tagVersion}" is not valid semver (X.Y.Z)`);
+                process.exit(1);
+              }
+              if (tagVersion !== currentVersion) {
+                console.error(
+                  `Error: tag version (${tagVersion}) does not match manifest.json version (${currentVersion})`
+                );
+                process.exit(1);
+              }
+              targetVersion = tagVersion;
+            } else {
+              const rawInput = (process.env.INPUT_VERSION || "").trim();
+              if (rawInput.length > 0) {
+                targetVersion = rawInput.replace(/^v/, "");
+                if (!semverRe.test(targetVersion)) {
+                  console.error(`Error: input version "${rawInput}" is not valid semver (X.Y.Z or vX.Y.Z)`);
+                  process.exit(1);
+                }
+                if (targetVersion !== currentVersion) {
+                  manifest.version = targetVersion;
+                  fs.writeFileSync("manifest.json", JSON.stringify(manifest, null, 2) + "\n");
+                  bumped = true;
+                }
+              } else {
+                if (!semverRe.test(currentVersion)) {
+                  console.error(`Error: manifest.json version "${currentVersion}" is not valid semver`);
+                  process.exit(1);
+                }
+                targetVersion = currentVersion;
+              }
+            }
+
+            const tag = `v${targetVersion}`;
+            fs.appendFileSync(outputPath, `version=${targetVersion}\n`);
+            fs.appendFileSync(outputPath, `tag=${tag}\n`);
+            fs.appendFileSync(outputPath, `bumped=${bumped}\n`);
+            console.log(`Resolved release version=${targetVersion}, tag=${tag}, bumped=${bumped}`);
+          EOF
 
       - name: Syntax check JavaScript files
         run: |
@@ -46,17 +106,63 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Bump manifest.json and commit version
+        if: github.event_name == 'workflow_dispatch' && needs.test.outputs.bumped == 'true'
+        env:
+          TARGET_VERSION: ${{ needs.test.outputs.version }}
+          TAG: ${{ needs.test.outputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          node <<'EOF'
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            manifest.version = process.env.TARGET_VERSION;
+            fs.writeFileSync("manifest.json", JSON.stringify(manifest, null, 2) + "\n");
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "chore: release ${TAG}"
+          git push origin "HEAD:${REF_NAME}"
+
+      - name: Create and push release tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ needs.test.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists."
+          else
+            git tag -a "$TAG" -m "Release ${TAG}"
+            git push origin "$TAG"
+          fi
 
       - name: Package extension zip
+        env:
+          TAG: ${{ needs.test.outputs.tag }}
         run: |
-          ZIP_NAME="cue-chrome-palette-${GITHUB_REF_NAME}.zip"
+          ZIP_NAME="cue-chrome-palette-${TAG}.zip"
           zip -r "$ZIP_NAME" manifest.json *.js *.html *.css
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.test.outputs.tag }}
         run: |
-          ZIP_NAME="cue-chrome-palette-${GITHUB_REF_NAME}.zip"
-          gh release create "$GITHUB_REF_NAME" "$ZIP_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          ZIP_NAME="cue-chrome-palette-${TAG}.zip"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; updating asset."
+            gh release upload "$TAG" "$ZIP_NAME" --clobber
+          else
+            gh release create "$TAG" "$ZIP_NAME" \
+              --title "$TAG" \
+              --generate-notes
+          fi

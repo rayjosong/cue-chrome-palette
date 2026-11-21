@@ -29,3 +29,53 @@ jobs:
 
       - name: Run unit and UI tests
         run: node --test tests/*.test.js
+
+      - name: Package and verify extension zip
+        run: |
+          zip -r cue-chrome-palette-ci.zip manifest.json *.js *.html *.css
+          node <<'EOF'
+            const { execFileSync } = require("node:child_process");
+            const fs = require("node:fs");
+            const entries = new Set(
+              execFileSync("unzip", ["-Z1", "cue-chrome-palette-ci.zip"], { encoding: "utf8" })
+                .split(/\r?\n/)
+                .filter(Boolean)
+            );
+            const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const required = new Set(["manifest.json"]);
+            if (manifest.background?.service_worker) required.add(manifest.background.service_worker);
+            if (manifest.action?.default_popup) required.add(manifest.action.default_popup);
+            if (manifest.options_page) required.add(manifest.options_page);
+            for (const cs of manifest.content_scripts || []) {
+              for (const f of cs.js || []) required.add(f);
+            }
+            for (const war of manifest.web_accessible_resources || []) {
+              for (const f of war.resources || []) required.add(f);
+            }
+            for (const htmlFile of ["palette-frame.html", "popup.html", "options.html"]) {
+              required.add(htmlFile);
+              const html = fs.readFileSync(htmlFile, "utf8");
+              for (const m of html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)) {
+                required.add(m[1]);
+              }
+              for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+                if (/\brel=["']stylesheet["']/i.test(m[0])) {
+                  const href = /\bhref=["']([^"']+)["']/i.exec(m[0]);
+                  if (href) required.add(href[1]);
+                }
+              }
+            }
+            const missing = [...required].filter((f) => !entries.has(f));
+            if (missing.length > 0) {
+              console.error("Missing required files in zip:", missing);
+              process.exit(1);
+            }
+            console.log("Verified", required.size, "required extension files in cue-chrome-palette-ci.zip");
+          EOF
+
+      - name: Upload extension zip artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cue-chrome-palette-ci
+          path: cue-chrome-palette-ci.zip
+          if-no-files-found: error
