@@ -778,15 +778,39 @@
             }
           );
         }
-        list.push({
-          title: "Close Tab",
-          iconName: "x",
-          closesPalette: true,
-          run: async () => {
-            const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_TAB", tabId: item.tabId } });
-            if (res?.toast) showToast(res.toast);
+        if (!item.discarded && (!data.activeTab || item.tabId !== data.activeTab.id)) {
+          list.push({
+            title: "Suspend Tab (Save Memory)",
+            iconName: "zap",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "DISCARD_TAB", tabId: item.tabId } });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error, true);
+            }
+          });
+        }
+        list.push(
+          {
+            title: "Close Tab",
+            iconName: "x",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_TAB", tabId: item.tabId } });
+              if (res?.toast) showToast(res.toast);
+            }
+          },
+          {
+            title: "Close Tabs to the Right",
+            iconName: "x",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "CLOSE_TABS_TO_RIGHT", tabId: item.tabId } });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error, true);
+            }
           }
-        });
+        );
       } else if (item.kind === "group") {
         list.push(
           {
@@ -841,6 +865,32 @@
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "UNGROUP_ALL_IN_GROUP", groupId: item.groupId } });
               if (res?.toast) showToast(res.toast);
+            }
+          },
+          {
+            title: "Copy Group Tabs as Markdown",
+            iconName: "copy",
+            closesPalette: true,
+            run: async () => {
+              const md = (data.tabs || [])
+                .filter((t) => t.groupId === item.groupId)
+                .map((t) => `- ${Core.formatMarkdownLink(t.title || t.url, t.url)}`)
+                .join("\n");
+              const ok = await copyToClipboard(md);
+              showToast(ok ? "Copied group tabs as Markdown" : "Failed to copy");
+            }
+          },
+          {
+            title: "Save Group to Bookmarks",
+            iconName: "star",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "BOOKMARK_TAB_GROUP", groupId: item.groupId }
+              });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error, true);
             }
           },
           {

@@ -19,10 +19,13 @@ function createChromeHarness(overrides = {}) {
     tabsCreate: [],
     tabsDuplicate: [],
     tabsGroup: [],
+    tabsMove: [],
+    tabsDiscard: [],
     tabsSendMessage: [],
     windowsUpdate: [],
     windowsCreate: [],
     tabGroupsUpdate: [],
+    bookmarksCreate: [],
     managementGetAll: 0,
     managementSetEnabled: [],
     permissionsContains: [],
@@ -31,6 +34,8 @@ function createChromeHarness(overrides = {}) {
     storageSessionSet: [],
     storageLocalSet: []
   };
+  let nextGroupId = 55;
+  let nextBookmarkId = 100;
 
   const state = {
     managementGranted: overrides.managementGranted ?? false,
@@ -138,6 +143,7 @@ function createChromeHarness(overrides = {}) {
         let res = [...state.tabs];
         if (q.currentWindow) res = res.filter((t) => t.windowId === 100);
         if (q.active) res = res.filter((t) => t.active);
+        if (q.groupId !== undefined) res = res.filter((t) => t.groupId === q.groupId);
         return res;
       },
       get: async (tabId) => {
@@ -164,8 +170,22 @@ function createChromeHarness(overrides = {}) {
       },
       group: async (opts) => {
         calls.tabsGroup.push(opts);
-        return opts.groupId ?? 55;
+        return opts.groupId ?? nextGroupId++;
       },
+      move: async (tabIds, moveProps) => {
+        calls.tabsMove.push({ tabIds, moveProps });
+        return tabIds;
+      },
+      ...(overrides.tabsDiscardUnavailable
+        ? {}
+        : {
+            discard: async (tabId) => {
+              calls.tabsDiscard.push(tabId);
+              const tab = state.tabs.find((t) => t.id === tabId);
+              if (tab) tab.discarded = true;
+              return tab;
+            }
+          }),
       sendMessage: async (tabId, msg) => {
         calls.tabsSendMessage.push({ tabId, msg });
         if (overrides.onTabSendMessage) return overrides.onTabSendMessage(tabId, msg);
@@ -198,7 +218,11 @@ function createChromeHarness(overrides = {}) {
       onMoved: { addListener: () => {} },
       getTree: async () => state.bookmarksTree,
       search: async () => [],
-      create: async (b) => b,
+      create: async (b) => {
+        const created = { id: `bm-${nextBookmarkId++}`, ...b };
+        calls.bookmarksCreate.push(created);
+        return created;
+      },
       remove: async () => {}
     },
     history: {
@@ -462,3 +486,237 @@ test("EXECUTE_ACTION NEW_TAB_IN_GROUP and OPEN_URL_IN_CURRENT_GROUP open tabs in
   });
   assert.equal(noGroupRes.ok, false);
 });
+
+test("GET_PALETTE_DATA preserves tab index when present", async () => {
+  const { sendMessage } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, groupId: -1, index: 0, title: "First", url: "https://a.com", active: true, pinned: false, lastAccessed: 1000 },
+      { id: 2, windowId: 100, groupId: -1, index: 1, title: "Second", url: "https://b.com", active: false, pinned: false, lastAccessed: 2000 }
+    ]
+  });
+  const res = await sendMessage({ type: "GET_PALETTE_DATA", query: "" });
+  assert.equal(res.ok, true);
+  assert.equal(res.data.tabs.find((t) => t.id === 1).index, 0);
+  assert.equal(res.data.tabs.find((t) => t.id === 2).index, 1);
+});
+
+test("EXECUTE_ACTION AUTO_GROUP_BY_DOMAIN groups unpinned ungrouped websites with 2+ tabs", async () => {
+  const { sendMessage, calls } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, groupId: -1, title: "GH 1", url: "https://github.com/a", active: true, pinned: false },
+      { id: 2, windowId: 100, groupId: -1, title: "GH 2", url: "https://docs.github.com/b", active: false, pinned: false },
+      { id: 3, windowId: 100, groupId: -1, title: "GH Pinned", url: "https://gist.github.com/c", active: false, pinned: true },
+      { id: 4, windowId: 100, groupId: 10, title: "Already Grouped", url: "https://developer.mozilla.org/a", active: false, pinned: false },
+      { id: 5, windowId: 100, groupId: -1, title: "MDN 1", url: "https://developer.mozilla.org/b", active: false, pinned: false },
+      { id: 6, windowId: 100, groupId: -1, title: "YT 1", url: "https://www.youtube.com/watch?v=1", active: false, pinned: false },
+      { id: 7, windowId: 100, groupId: -1, title: "YT 2", url: "https://music.youtube.com/", active: false, pinned: false },
+      { id: 8, windowId: 100, groupId: -1, title: "Settings", url: "chrome://settings", active: false, pinned: false },
+      { id: 9, windowId: 200, groupId: -1, title: "Other Win", url: "https://github.com/other", active: false, pinned: false }
+    ]
+  });
+
+  const res = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "AUTO_GROUP_BY_DOMAIN" }
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.groupedCount, 4);
+  assert.equal(res.groupsCreated, 2);
+  assert.equal(calls.tabsGroup.length, 2);
+  assert.deepEqual(plain(calls.tabsGroup[0]), { tabIds: [1, 2] });
+  assert.deepEqual(plain(calls.tabsGroup[1]), { tabIds: [6, 7] });
+  assert.equal(calls.tabGroupsUpdate.length, 2);
+  assert.equal(calls.tabGroupsUpdate[0].props.color, "blue");
+  assert.equal(calls.tabGroupsUpdate[1].props.color, "purple");
+  assert.match(res.toast, /Auto-grouped 4 tabs into 2 groups/);
+
+  // Empty case
+  const emptyHarness = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, groupId: -1, title: "Solo", url: "https://example.com", active: true, pinned: false }
+    ]
+  });
+  const emptyRes = await emptyHarness.sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "AUTO_GROUP_BY_DOMAIN" }
+  });
+  assert.equal(emptyRes.ok, true);
+  assert.equal(emptyRes.groupsCreated, 0);
+  assert.equal(emptyRes.toast, "No websites with 2+ ungrouped tabs found");
+});
+
+test("EXECUTE_ACTION DISCARD_TAB, DISCARD_IDLE_TABS, and DISCARD_OTHER_TABS suspend eligible tabs", async () => {
+  const now = Date.now();
+  const { sendMessage, calls } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, active: true, pinned: false, audible: false, discarded: false, lastAccessed: now - 120 * 60 * 1000, title: "Active", url: "https://a.com" },
+      { id: 2, windowId: 100, active: false, pinned: true, audible: false, discarded: false, lastAccessed: now - 120 * 60 * 1000, title: "Pinned", url: "https://b.com" },
+      { id: 3, windowId: 100, active: false, pinned: false, audible: true, discarded: false, lastAccessed: now - 120 * 60 * 1000, title: "Audible", url: "https://c.com" },
+      { id: 4, windowId: 100, active: false, pinned: false, audible: false, discarded: true, lastAccessed: now - 120 * 60 * 1000, title: "Already Discarded", url: "https://d.com" },
+      { id: 5, windowId: 100, active: false, pinned: false, audible: false, discarded: false, lastAccessed: now - 10 * 60 * 1000, title: "Recent", url: "https://e.com" },
+      { id: 6, windowId: 100, active: false, pinned: false, audible: false, discarded: false, lastAccessed: now - 90 * 60 * 1000, title: "Idle", url: "https://f.com" },
+      { id: 7, windowId: 200, active: false, pinned: false, audible: false, discarded: false, lastAccessed: now - 90 * 60 * 1000, title: "Other Win", url: "https://g.com" }
+    ]
+  });
+
+  // DISCARD_TAB
+  const singleRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "DISCARD_TAB", tabId: 5 }
+  });
+  assert.equal(singleRes.ok, true);
+  assert.deepEqual(plain(calls.tabsDiscard), [5]);
+
+  // Reset tab 5 discarded to false for idle/other tests
+  calls.tabsDiscard.length = 0;
+
+  // DISCARD_IDLE_TABS (only tab 6 matches)
+  const idleRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "DISCARD_IDLE_TABS", idleMinutes: 60 }
+  });
+  assert.equal(idleRes.ok, true);
+  assert.equal(idleRes.discardedCount, 1);
+  assert.deepEqual(plain(calls.tabsDiscard), [6]);
+
+  // Unavailable discard API
+  const unavailable = createChromeHarness({ tabsDiscardUnavailable: true });
+  const unavailRes = await unavailable.sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "DISCARD_TAB", tabId: 2 }
+  });
+  assert.equal(unavailRes.ok, false);
+  assert.match(unavailRes.error, /unavailable/i);
+
+  // DISCARD_OTHER_TABS
+  const otherHarness = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, active: true, pinned: false, audible: false, discarded: false, title: "Active", url: "https://a.com" },
+      { id: 2, windowId: 100, active: false, pinned: true, audible: false, discarded: false, title: "Pinned", url: "https://b.com" },
+      { id: 3, windowId: 100, active: false, pinned: false, audible: true, discarded: false, title: "Audible", url: "https://c.com" },
+      { id: 4, windowId: 100, active: false, pinned: false, audible: false, discarded: true, title: "Discarded", url: "https://d.com" },
+      { id: 5, windowId: 100, active: false, pinned: false, audible: false, discarded: false, title: "Bg 1", url: "https://e.com" },
+      { id: 6, windowId: 100, active: false, pinned: false, audible: false, discarded: false, title: "Bg 2", url: "https://f.com" }
+    ]
+  });
+  const otherRes = await otherHarness.sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "DISCARD_OTHER_TABS" }
+  });
+  assert.equal(otherRes.ok, true);
+  assert.equal(otherRes.discardedCount, 2);
+  assert.deepEqual(plain(otherHarness.calls.tabsDiscard), [5, 6]);
+});
+
+test("EXECUTE_ACTION SORT_TABS_BY_DOMAIN sorts unpinned tabs by website then title after pinned tabs", async () => {
+  const { sendMessage, calls } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, index: 0, pinned: true, title: "Pinned", url: "https://zzz.com" },
+      { id: 2, windowId: 100, index: 1, pinned: false, title: "Zebra", url: "https://news.ycombinator.com/" },
+      { id: 3, windowId: 100, index: 2, pinned: false, title: "Beta", url: "https://docs.github.com/b" },
+      { id: 4, windowId: 100, index: 3, pinned: false, title: "Alpha", url: "https://app.github.com/a" }
+    ]
+  });
+
+  const res = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "SORT_TABS_BY_DOMAIN" }
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.sortedCount, 3);
+  assert.deepEqual(plain(calls.tabsMove[0]), {
+    tabIds: [4, 3, 2],
+    moveProps: { index: 1 }
+  });
+
+  const fewHarness = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, index: 0, pinned: true, title: "Pinned", url: "https://a.com" },
+      { id: 2, windowId: 100, index: 1, pinned: false, title: "Only", url: "https://b.com" }
+    ]
+  });
+  const fewRes = await fewHarness.sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "SORT_TABS_BY_DOMAIN" }
+  });
+  assert.equal(fewRes.ok, true);
+  assert.equal(fewRes.sortedCount, 0);
+  assert.equal(fewHarness.calls.tabsMove.length, 0);
+});
+
+test("EXECUTE_ACTION BOOKMARK_TAB_GROUP saves http/https tabs in group to a bookmark folder", async () => {
+  const { sendMessage, calls } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, groupId: 10, active: true, title: "GH Issues", url: "https://github.com/issues" },
+      { id: 2, windowId: 100, groupId: 10, active: false, title: "MDN", url: "https://developer.mozilla.org" },
+      { id: 3, windowId: 100, groupId: 10, active: false, title: "Settings", url: "chrome://settings" }
+    ],
+    tabGroups: [{ id: 10, title: "Research", color: "blue", windowId: 100 }]
+  });
+
+  const res = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "BOOKMARK_TAB_GROUP" } // falls back to active tab's groupId 10
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.savedCount, 2);
+  assert.ok(res.folderId);
+  assert.equal(calls.bookmarksCreate.length, 3);
+  assert.equal(calls.bookmarksCreate[0].title, "Cue: Research");
+  assert.equal(calls.bookmarksCreate[1].parentId, res.folderId);
+  assert.equal(calls.bookmarksCreate[1].url, "https://github.com/issues");
+  assert.equal(calls.bookmarksCreate[2].parentId, res.folderId);
+  assert.equal(calls.bookmarksCreate[2].url, "https://developer.mozilla.org");
+
+  const noGrp = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "BOOKMARK_TAB_GROUP", groupId: -1 }
+  });
+  // When payload.groupId is -1 it falls back to active tab; test with ungrouped active tab
+  const ungroupedHarness = createChromeHarness({
+    tabs: [{ id: 1, windowId: 100, groupId: -1, active: true, title: "Solo", url: "https://a.com" }]
+  });
+  const ungroupedRes = await ungroupedHarness.sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "BOOKMARK_TAB_GROUP" }
+  });
+  assert.equal(ungroupedRes.ok, false);
+  assert.equal(noGrp.ok, true); // fallback to active tab group 10 succeeded above
+});
+
+test("EXECUTE_ACTION CLOSE_TABS_TO_RIGHT closes unpinned tabs to the right by index or array position", async () => {
+  const { sendMessage, calls } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, index: 0, pinned: false, active: false, title: "Left", url: "https://a.com" },
+      { id: 2, windowId: 100, index: 1, pinned: false, active: true, title: "Ref", url: "https://b.com" },
+      { id: 3, windowId: 100, index: 2, pinned: true, active: false, title: "Pinned Right", url: "https://c.com" },
+      { id: 4, windowId: 100, index: 3, pinned: false, active: false, title: "Right 1", url: "https://d.com" },
+      { id: 5, windowId: 100, index: 4, pinned: false, active: false, title: "Right 2", url: "https://e.com" }
+    ]
+  });
+
+  const res = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "CLOSE_TABS_TO_RIGHT", tabId: 2 }
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.closedCount, 2);
+  assert.deepEqual(plain(calls.tabsRemove[0]), [4, 5]);
+
+  // Fallback when index is absent (uses active tab when tabId omitted)
+  const noIdxHarness = createChromeHarness({
+    tabs: [
+      { id: 10, windowId: 100, pinned: false, active: false, title: "Before", url: "https://a.com" },
+      { id: 11, windowId: 100, pinned: false, active: true, title: "Active", url: "https://b.com" },
+      { id: 12, windowId: 100, pinned: false, active: false, title: "After", url: "https://c.com" }
+    ]
+  });
+  const noIdxRes = await noIdxHarness.sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "CLOSE_TABS_TO_RIGHT" }
+  });
+  assert.equal(noIdxRes.ok, true);
+  assert.equal(noIdxRes.closedCount, 1);
+  assert.deepEqual(plain(noIdxHarness.calls.tabsRemove[0]), [12]);
+});
+

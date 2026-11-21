@@ -1,7 +1,7 @@
 if (typeof importScripts === "function" && typeof globalThis.__CueCore === "undefined") {
   importScripts("palette-core.js");
 }
-const { normalizeUrlForDedup, extractBaseDomain } = globalThis.__CueCore;
+const { normalizeUrlForDedup, extractBaseDomain, extractHostname } = globalThis.__CueCore;
 
 const DEFAULT_QUICK_LINKS = [
   { bang: "gh", title: "GitHub", url: "https://github.com", searchUrl: "https://github.com/search?q={query}" },
@@ -431,6 +431,7 @@ async function getPaletteData(query = "") {
       id: t.id,
       windowId: t.windowId,
       groupId: t.groupId ?? -1,
+      ...(t.index !== undefined ? { index: t.index } : {}),
       title: t.title || "Untitled",
       url: t.url || "",
       favIconUrl: t.favIconUrl || "",
@@ -1204,6 +1205,161 @@ async function executeAction(payload) {
       if (!chrome.downloads) return { ok: false, error: "Downloads API unavailable" };
       chrome.downloads.show(payload.downloadId);
       return { ok: true, toast: "Showing download in folder" };
+    }
+    case "AUTO_GROUP_BY_DOMAIN": {
+      const all = await chrome.tabs.query({ currentWindow: true });
+      const ungrouped = all.filter((t) => !t.pinned && (t.groupId == null || t.groupId === -1));
+      const byDomain = new Map();
+      for (const t of ungrouped) {
+        const bd = extractBaseDomain(t.url);
+        if (!bd) continue;
+        if (!byDomain.has(bd)) byDomain.set(bd, []);
+        byDomain.get(bd).push(t.id);
+      }
+      const colors = globalThis.__CueCore.GROUP_COLORS || ["blue", "purple", "cyan", "green", "yellow", "orange", "pink", "red", "grey"];
+      let groupsCreated = 0;
+      let groupedCount = 0;
+      for (const [baseDomain, tabIds] of byDomain.entries()) {
+        if (tabIds.length < 2) continue;
+        const groupId = await chrome.tabs.group({ tabIds });
+        const title = globalThis.__CueCore.suggestDomainGroupTitle
+          ? globalThis.__CueCore.suggestDomainGroupTitle(baseDomain)
+          : baseDomain.split(".")[0].charAt(0).toUpperCase() + baseDomain.split(".")[0].slice(1);
+        const color = colors[groupsCreated % colors.length];
+        if (chrome.tabGroups?.update) {
+          await chrome.tabGroups.update(groupId, { title, color });
+        }
+        groupsCreated += 1;
+        groupedCount += tabIds.length;
+      }
+      return {
+        ok: true,
+        groupedCount,
+        groupsCreated,
+        toast: groupsCreated > 0
+          ? `Auto-grouped ${groupedCount} tabs into ${groupsCreated} ${groupsCreated === 1 ? "group" : "groups"}`
+          : "No websites with 2+ ungrouped tabs found"
+      };
+    }
+    case "DISCARD_TAB": {
+      if (!chrome.tabs.discard) return { ok: false, error: "Tab discard API unavailable" };
+      if (payload.tabId == null) return { ok: false, error: "No tab specified" };
+      await chrome.tabs.discard(payload.tabId);
+      return { ok: true, toast: "Suspended tab to save memory" };
+    }
+    case "DISCARD_IDLE_TABS": {
+      if (!chrome.tabs.discard) return { ok: false, error: "Tab discard API unavailable" };
+      await ensureMruLoaded();
+      const rawMinutes = Number(payload.idleMinutes);
+      const idleMinutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? Math.floor(rawMinutes) : await getIdleTabMinutes();
+      const cutoff = Date.now() - idleMinutes * 60 * 1000;
+      const all = await chrome.tabs.query({ currentWindow: true });
+      const toDiscard = all.filter((t) => {
+        if (t.active || t.pinned || t.audible || t.discarded) return false;
+        const lastAccessed = Math.max(t.lastAccessed || 0, mruTimestamps.get(t.id) || 0);
+        return lastAccessed > 0 && lastAccessed <= cutoff;
+      });
+      for (const t of toDiscard) {
+        await chrome.tabs.discard(t.id);
+      }
+      return {
+        ok: true,
+        discardedCount: toDiscard.length,
+        toast: toDiscard.length
+          ? `Suspended ${toDiscard.length} idle ${toDiscard.length === 1 ? "tab" : "tabs"}`
+          : `No idle tabs to suspend (${idleMinutes}+ min)`
+      };
+    }
+    case "DISCARD_OTHER_TABS": {
+      if (!chrome.tabs.discard) return { ok: false, error: "Tab discard API unavailable" };
+      const all = await chrome.tabs.query({ currentWindow: true });
+      const toDiscard = all.filter((t) => !t.active && !t.pinned && !t.audible && !t.discarded);
+      for (const t of toDiscard) {
+        await chrome.tabs.discard(t.id);
+      }
+      return {
+        ok: true,
+        discardedCount: toDiscard.length,
+        toast: toDiscard.length
+          ? `Suspended ${toDiscard.length} background ${toDiscard.length === 1 ? "tab" : "tabs"}`
+          : "No background tabs to suspend"
+      };
+    }
+    case "SORT_TABS_BY_DOMAIN": {
+      const all = await chrome.tabs.query({ currentWindow: true });
+      const unpinned = all.filter((t) => !t.pinned);
+      if (unpinned.length < 2) {
+        return { ok: true, sortedCount: 0, toast: "Not enough unpinned tabs to sort" };
+      }
+      unpinned.sort((a, b) => {
+        const da = extractBaseDomain(a.url) || extractHostname(a.url) || a.url || "";
+        const db = extractBaseDomain(b.url) || extractHostname(b.url) || b.url || "";
+        const cmp = da.localeCompare(db);
+        if (cmp !== 0) return cmp;
+        return (a.title || "").localeCompare(b.title || "");
+      });
+      const pinnedCount = all.filter((t) => t.pinned).length;
+      const sortedIds = unpinned.map((t) => t.id);
+      await chrome.tabs.move(sortedIds, { index: pinnedCount });
+      return {
+        ok: true,
+        sortedCount: unpinned.length,
+        toast: `Sorted ${unpinned.length} tabs by website`
+      };
+    }
+    case "BOOKMARK_TAB_GROUP": {
+      if (!chrome.bookmarks) return { ok: false, error: "Bookmarks API unavailable" };
+      let groupId = payload.groupId;
+      if (groupId == null || groupId === -1) {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        groupId = active ? active.groupId : -1;
+      }
+      if (groupId == null || groupId === -1) {
+        return { ok: false, error: "No tab group selected" };
+      }
+      const grp = chrome.tabGroups ? await chrome.tabGroups.get(groupId).catch(() => null) : null;
+      const groupTabs = (await chrome.tabs.query({ groupId })).filter((t) => t.url && /^https?:\/\//i.test(t.url));
+      if (!groupTabs.length) {
+        return { ok: false, error: "No bookmarkable tabs in group" };
+      }
+      const folderTitle = payload.folderTitle || (grp?.title ? `Cue: ${grp.title}` : "Cue Tab Group");
+      const folder = await chrome.bookmarks.create({ title: folderTitle });
+      for (const t of groupTabs) {
+        await chrome.bookmarks.create({ parentId: folder?.id, title: t.title || t.url, url: t.url });
+      }
+      cachedBookmarks = null;
+      return {
+        ok: true,
+        folderId: folder?.id,
+        savedCount: groupTabs.length,
+        toast: `Saved ${groupTabs.length} tabs to bookmark folder "${folderTitle}"`
+      };
+    }
+    case "CLOSE_TABS_TO_RIGHT": {
+      const all = await chrome.tabs.query({ currentWindow: true });
+      const refTab = payload.tabId != null
+        ? all.find((t) => t.id === payload.tabId)
+        : all.find((t) => t.active);
+      if (!refTab) {
+        return { ok: false, error: "No active tab found" };
+      }
+      let toClose;
+      if (typeof refTab.index === "number") {
+        toClose = all.filter((t) => !t.pinned && typeof t.index === "number" && t.index > refTab.index);
+      } else {
+        const refIdx = all.indexOf(refTab);
+        toClose = all.slice(refIdx + 1).filter((t) => !t.pinned);
+      }
+      if (toClose.length > 0) {
+        await chrome.tabs.remove(toClose.map((t) => t.id));
+      }
+      return {
+        ok: true,
+        closedCount: toClose.length,
+        toast: toClose.length
+          ? `Closed ${toClose.length} ${toClose.length === 1 ? "tab" : "tabs"} to the right`
+          : "No unpinned tabs to the right"
+      };
     }
     default:
       return { ok: false, error: `Unknown action: ${action}` };

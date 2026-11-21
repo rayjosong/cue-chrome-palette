@@ -540,3 +540,154 @@ test("palette-ui copyToClipboard fallback mounts inside backdrop (not document.b
   assert.equal(capturedTextarea.value, "", "textarea.value should be cleared before removal");
   assert.equal(capturedTextarea.parentNode, null, "textarea should be removed after copy");
 });
+
+test("palette-ui tab popover includes Suspend Tab (Save Memory) for non-active non-discarded tabs and Close Tabs to the Right", async () => {
+  const ui = mountPalette({
+    data: {
+      activeTab: { id: 1, windowId: 100, groupId: -1, title: "Active Tab", url: "https://github.com/org/repo", pinned: false, audible: false, muted: false },
+      tabs: [
+        { id: 2, windowId: 100, groupId: -1, index: 1, title: "MDN Web Docs", url: "https://developer.mozilla.org/en-US/", active: false, currentWindow: true, pinned: false, discarded: false, lastAccessed: 2000 },
+        { id: 3, windowId: 100, groupId: -1, index: 2, title: "Discarded Tab", url: "https://example.com/", active: false, currentWindow: true, pinned: false, discarded: true, lastAccessed: 1500 },
+        { id: 1, windowId: 100, groupId: -1, index: 0, title: "Active Tab", url: "https://github.com/org/repo", active: true, currentWindow: true, pinned: false, discarded: false, lastAccessed: 1000 }
+      ],
+      tabGroups: [],
+      closedTabs: [],
+      quickLinks: [],
+      chromePages: [],
+      bookmarks: [],
+      history: [],
+      frecency: {},
+      themes: [],
+      themesPermission: false,
+      extensions: [],
+      downloads: [],
+      windows: [{ id: 100, focused: true, incognito: false, tabCount: 3, title: "Active Tab" }]
+    }
+  });
+  await flush();
+
+  const modal = ui.getModal();
+  const popoverList = ui.container.querySelector(".qc-popover-list");
+
+  // Selected row 0 is tab id 2 (non-active, non-discarded)
+  modal.dispatchEvent({ type: "keydown", key: "k", metaKey: true });
+  let popoverItems = popoverList.querySelectorAll(".qc-item");
+  const suspendRow = popoverItems.find((el) => el.textContent.includes("Suspend Tab (Save Memory)"));
+  const closeRightRow = popoverItems.find((el) => el.textContent.includes("Close Tabs to the Right"));
+  assert.ok(suspendRow, "should show Suspend Tab (Save Memory) for non-active non-discarded tab");
+  assert.ok(closeRightRow, "should show Close Tabs to the Right for tab");
+
+  suspendRow.click();
+  await flush();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(ui.sentMessages.find((m) => m.type === "EXECUTE_ACTION" && m.payload.action === "DISCARD_TAB")?.payload)),
+    { action: "DISCARD_TAB", tabId: 2 }
+  );
+
+  // Reopen palette to test Close Tabs to the Right on tab id 3 (discarded -> should omit Suspend Tab)
+  const ui2 = mountPalette({
+    data: {
+      activeTab: { id: 1, windowId: 100, groupId: -1, title: "Active Tab", url: "https://github.com/org/repo", pinned: false, audible: false, muted: false },
+      tabs: [
+        { id: 3, windowId: 100, groupId: -1, index: 1, title: "Discarded Tab", url: "https://example.com/", active: false, currentWindow: true, pinned: false, discarded: true, lastAccessed: 2000 },
+        { id: 1, windowId: 100, groupId: -1, index: 0, title: "Active Tab", url: "https://github.com/org/repo", active: true, currentWindow: true, pinned: false, discarded: false, lastAccessed: 1000 }
+      ],
+      tabGroups: [],
+      closedTabs: [],
+      quickLinks: [],
+      chromePages: [],
+      bookmarks: [],
+      history: [],
+      frecency: {},
+      themes: [],
+      themesPermission: false,
+      extensions: [],
+      downloads: [],
+      windows: [{ id: 100, focused: true, incognito: false, tabCount: 2, title: "Active Tab" }]
+    }
+  });
+  await flush();
+
+  ui2.getModal().dispatchEvent({ type: "keydown", key: "k", metaKey: true });
+  popoverItems = ui2.container.querySelector(".qc-popover-list").querySelectorAll(".qc-item");
+  assert.equal(
+    popoverItems.some((el) => el.textContent.includes("Suspend Tab (Save Memory)")),
+    false,
+    "should omit Suspend Tab (Save Memory) for already-discarded tab"
+  );
+  const closeRightRow2 = popoverItems.find((el) => el.textContent.includes("Close Tabs to the Right"));
+  assert.ok(closeRightRow2);
+  closeRightRow2.click();
+  await flush();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(ui2.sentMessages.find((m) => m.type === "EXECUTE_ACTION" && m.payload.action === "CLOSE_TABS_TO_RIGHT")?.payload)),
+    { action: "CLOSE_TABS_TO_RIGHT", tabId: 3 }
+  );
+});
+
+test("palette-ui group popover includes Copy Group Tabs as Markdown and Save Group to Bookmarks", async () => {
+  const copiedTexts = [];
+  const ui = mountPalette({
+    navigator: {
+      platform: "MacIntel",
+      clipboard: {
+        writeText: async (text) => {
+          copiedTexts.push(text);
+        }
+      }
+    },
+    data: {
+      activeTab: { id: 1, windowId: 100, groupId: 10, title: "Active Tab", url: "https://github.com/org/repo", pinned: false, audible: false, muted: false },
+      tabs: [
+        { id: 2, windowId: 100, groupId: 10, title: "GitHub Issues", url: "https://github.com/org/repo/issues", active: false, currentWindow: true, pinned: false, lastAccessed: 2000 },
+        { id: 1, windowId: 100, groupId: 10, title: "Active Tab", url: "https://github.com/org/repo", active: true, currentWindow: true, pinned: false, lastAccessed: 1000 }
+      ],
+      tabGroups: [
+        { id: 10, title: "Work", color: "blue", collapsed: false, windowId: 100, currentWindow: true, tabCount: 2 }
+      ],
+      closedTabs: [],
+      quickLinks: [],
+      chromePages: [],
+      bookmarks: [],
+      history: [],
+      frecency: {},
+      themes: [],
+      themesPermission: false,
+      extensions: [],
+      downloads: [],
+      windows: [{ id: 100, focused: true, incognito: false, tabCount: 2, title: "Active Tab" }]
+    }
+  });
+  await flush();
+
+  // Switch to Groups chip via Tab twice (All -> Tabs -> Groups)
+  const modal = ui.getModal();
+  modal.dispatchEvent({ type: "keydown", key: "Tab" });
+  modal.dispatchEvent({ type: "keydown", key: "Tab" });
+
+  modal.dispatchEvent({ type: "keydown", key: "k", metaKey: true });
+  let popoverItems = ui.container.querySelector(".qc-popover-list").querySelectorAll(".qc-item");
+  const copyMdRow = popoverItems.find((el) => el.textContent.includes("Copy Group Tabs as Markdown"));
+  const bookmarkGroupRow = popoverItems.find((el) => el.textContent.includes("Save Group to Bookmarks"));
+  assert.ok(copyMdRow, "should show Copy Group Tabs as Markdown for group");
+  assert.ok(bookmarkGroupRow, "should show Save Group to Bookmarks for group");
+
+  copyMdRow.click();
+  await flush();
+  assert.equal(
+    copiedTexts[0],
+    "- [GitHub Issues](https://github.com/org/repo/issues)\n- [Active Tab](https://github.com/org/repo)"
+  );
+
+  // Reopen popover and click Save Group to Bookmarks
+  modal.dispatchEvent({ type: "keydown", key: "k", metaKey: true });
+  popoverItems = ui.container.querySelector(".qc-popover-list").querySelectorAll(".qc-item");
+  const bookmarkGroupRow2 = popoverItems.find((el) => el.textContent.includes("Save Group to Bookmarks"));
+  bookmarkGroupRow2.click();
+  await flush();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(ui.sentMessages.find((m) => m.type === "EXECUTE_ACTION" && m.payload.action === "BOOKMARK_TAB_GROUP")?.payload)),
+    { action: "BOOKMARK_TAB_GROUP", groupId: 10 }
+  );
+});
+
