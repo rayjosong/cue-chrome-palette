@@ -6,7 +6,7 @@ A fast, no-frills Manifest V3 command palette for Google Chrome (`⌘⇧K` / `Ct
 
 ## Favourite Use Cases
 
-See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday workflows and screenshots.
+See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday power workflows (deduping, auto-grouping, tab suspension, Markdown/clean URL export, bookmark archiving, tab splitting, website cleanup) and CI/CD documentation.
 
 ---
 
@@ -90,6 +90,6 @@ See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday workflows
 ## Tests
 
 ```bash
-node --test tests/palette-core.test.js
+node --test tests/*.test.js
 ```
 
