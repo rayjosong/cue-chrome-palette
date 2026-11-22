@@ -83,19 +83,20 @@ test("manifest.json referenced extension entry files exist on disk and are non-e
   assertNonEmptyFile(manifest.action?.default_popup, "action.default_popup");
   assertNonEmptyFile(manifest.options_page, "options_page");
 
-  assert.ok(
-    Array.isArray(manifest.content_scripts) && manifest.content_scripts.length > 0,
-    "content_scripts must be a non-empty array"
+  // No always-on content script: the palette is injected on demand via
+  // chrome.scripting + activeTab (see background.js command handler), so the
+  // manifest must not declare content_scripts or host_permissions.
+  assert.equal(
+    manifest.content_scripts,
+    undefined,
+    "content_scripts must be absent: no always-on content script"
   );
-  for (const [idx, entry] of manifest.content_scripts.entries()) {
-    assert.ok(
-      Array.isArray(entry.js) && entry.js.length > 0,
-      `content_scripts[${idx}].js must be a non-empty array`
-    );
-    for (const file of entry.js) {
-      assertNonEmptyFile(file, `content_scripts[${idx}].js`);
-    }
-  }
+  assert.equal(
+    manifest.host_permissions,
+    undefined,
+    "host_permissions must be absent: no broad host permission"
+  );
+  assertNonEmptyFile("content.js", "content.js (injected on demand by background.js)");
 
   assert.ok(
     Array.isArray(manifest.web_accessible_resources) && manifest.web_accessible_resources.length > 0,
