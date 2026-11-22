@@ -31,7 +31,7 @@ jobs:
         run: |
           VERSION=$(node -e "console.log(require('./manifest.json').version)")
           ZIP_NAME="cue-chrome-palette-v${VERSION}.zip"
-          zip -r "$ZIP_NAME" manifest.json *.js *.html *.css
+          zip -r "$ZIP_NAME" manifest.json *.js *.html *.css icons/*.png
           echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Check Chrome Web Store secrets
