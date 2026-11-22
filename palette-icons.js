@@ -50,6 +50,10 @@
       ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
       ["path", { d: "M12 3v18" }]
     ],
+    sidebar: [
+      ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
+      ["path", { d: "M9 3v18" }]
+    ],
     incognito: [
       ["path", { d: "M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" }],
       ["circle", { cx: "12", cy: "12", r: "3" }]

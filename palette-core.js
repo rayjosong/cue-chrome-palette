@@ -1591,7 +1591,30 @@
         enterVerb: "Open",
         priority: 8.5,
         actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "OPEN_OPTIONS" } }
-      }
+      },
+      (() => {
+        const isSidebar = Boolean(!Array.isArray(contextData) && contextData?.verticalSidebar);
+        return {
+          id: "act-toggle-vertical-sidebar",
+          kind: "action",
+          section: "Actions",
+          title: isSidebar ? "Switch to Centered Palette" : "Switch to Vertical Sidebar",
+          subtitle: isSidebar
+            ? "Restore the default centered command palette modal"
+            : "Dock Cue as a full-height vertical sidebar",
+          badge: "Layout",
+          badgeClass: "qc-badge-chrome",
+          iconClass: "qc-icon-chrome",
+          iconName: "sidebar",
+          enterVerb: isSidebar ? "Center" : "Dock",
+          priority: 8,
+          searchText: "toggle vertical sidebar panel dock layout centered modal",
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: { action: "TOGGLE_VERTICAL_SIDEBAR" }
+          }
+        };
+      })()
     );
 
     return actions;

@@ -203,6 +203,11 @@ async function getIdleTabMinutes() {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_IDLE_TAB_MINUTES;
 }
 
+async function getVerticalSidebarSetting() {
+  const { verticalSidebar } = await chrome.storage.sync.get("verticalSidebar");
+  return Boolean(verticalSidebar);
+}
+
 let cachedBookmarks = null;
 
 if (chrome.bookmarks) {
@@ -368,11 +373,12 @@ async function getRecentDownloads() {
 async function getPaletteData(query = "") {
   await Promise.all([ensureMruLoaded(), ensureClosedTabsLoaded()]);
 
-  const [tabs, activeTabs, quickLinks, idleTabMinutes, bookmarks, historyItems, tabGroups, frecency, mgmtData, downloads, normalWindows] = await Promise.all([
+  const [tabs, activeTabs, quickLinks, idleTabMinutes, verticalSidebar, bookmarks, historyItems, tabGroups, frecency, mgmtData, downloads, normalWindows] = await Promise.all([
     chrome.tabs.query({}),
     chrome.tabs.query({ active: true, currentWindow: true }),
     getQuickLinks(),
     getIdleTabMinutes(),
+    getVerticalSidebarSetting(),
     getBookmarks(),
     searchHistory(query),
     chrome.tabGroups ? chrome.tabGroups.query({}).catch(() => []) : Promise.resolve([]),
@@ -472,6 +478,7 @@ async function getPaletteData(query = "") {
     closedTabs,
     quickLinks,
     idleTabMinutes,
+    verticalSidebar,
     chromePages: CHROME_PAGES,
     bookmarks,
     history: historyItems,
@@ -736,6 +743,15 @@ async function executeAction(payload) {
         toast: collapsed
           ? `Folded ${targets.length} tab group(s)`
           : `Unfolded ${targets.length} tab group(s)`
+      };
+    }
+    case "TOGGLE_VERTICAL_SIDEBAR": {
+      const next = !(await getVerticalSidebarSetting());
+      await chrome.storage.sync.set({ verticalSidebar: next });
+      return {
+        ok: true,
+        verticalSidebar: next,
+        toast: next ? "Switched to vertical sidebar" : "Switched to centered palette"
       };
     }
     case "GROUP_CURRENT_TAB": {

@@ -122,9 +122,10 @@ function createChromeHarness(overrides = {}) {
         }
       },
       sync: {
-        get: async () => ({ quickLinks: state.quickLinks }),
+        get: async () => ({ quickLinks: state.quickLinks, verticalSidebar: state.verticalSidebar }),
         set: async (obj) => {
           if ("quickLinks" in obj) state.quickLinks = obj.quickLinks;
+          if ("verticalSidebar" in obj) state.verticalSidebar = obj.verticalSidebar;
         }
       },
       local: {
@@ -747,4 +748,31 @@ test("EXECUTE_ACTION FOLD_ALL_TAB_GROUPS and UNFOLD_ALL_TAB_GROUPS update curren
     { id: 10, props: { collapsed: true } },
     { id: 11, props: { collapsed: false } }
   ]);
+});
+
+test("GET_PALETTE_DATA includes verticalSidebar and TOGGLE_VERTICAL_SIDEBAR toggles storage setting", async () => {
+  const { sendMessage } = createChromeHarness();
+
+  const initialData = await sendMessage({ type: "GET_PALETTE_DATA", query: "" });
+  assert.equal(initialData.ok, true);
+  assert.equal(initialData.data.verticalSidebar, false);
+
+  const toggleOn = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "TOGGLE_VERTICAL_SIDEBAR" }
+  });
+  assert.equal(toggleOn.ok, true);
+  assert.equal(toggleOn.verticalSidebar, true);
+  assert.equal(toggleOn.toast, "Switched to vertical sidebar");
+
+  const afterOnData = await sendMessage({ type: "GET_PALETTE_DATA", query: "" });
+  assert.equal(afterOnData.data.verticalSidebar, true);
+
+  const toggleOff = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "TOGGLE_VERTICAL_SIDEBAR" }
+  });
+  assert.equal(toggleOff.ok, true);
+  assert.equal(toggleOff.verticalSidebar, false);
+  assert.equal(toggleOff.toast, "Switched to centered palette");
 });

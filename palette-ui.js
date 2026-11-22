@@ -487,7 +487,14 @@
           const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: descriptor.payload });
           if (res?.toast) showToast(res.toast);
           else if (res?.error) showToast(res.error, true);
-          const keepsOpen = Boolean(descriptor.keepsOpen || item?.keepsOpen);
+          if (!isPopup && typeof res?.verticalSidebar === "boolean") {
+            backdrop.classList.toggle("qc-is-sidebar", res.verticalSidebar);
+          }
+          const keepsOpen = Boolean(
+            descriptor.keepsOpen ||
+              item?.keepsOpen ||
+              descriptor.payload?.action === "TOGGLE_VERTICAL_SIDEBAR"
+          );
           if (keepsOpen) {
             await refreshData(currentItems[selectedIndex]?.id);
             return { closesPalette: false };
@@ -504,6 +511,7 @@
       const keepsOpen = Boolean(
         item.keepsOpen ||
           item.actionDescriptor?.keepsOpen ||
+          item.actionDescriptor?.payload?.action === "TOGGLE_VERTICAL_SIDEBAR" ||
           item.actionDescriptor?.type === "OPEN_GROUP_PICKER" ||
           item.actionDescriptor?.type === "OPEN_WINDOW_PICKER" ||
           item.actionDescriptor?.type === "OPEN_SPLIT_PICKER" ||
@@ -1799,6 +1807,9 @@
       const res = await sendRuntimeMessage({ type: "GET_PALETTE_DATA", query: input.value });
       if (res.ok && res.data) {
         data = res.data;
+        if (!isPopup) {
+          backdrop.classList.toggle("qc-is-sidebar", Boolean(data.verticalSidebar));
+        }
         render(preserveId);
       }
     }

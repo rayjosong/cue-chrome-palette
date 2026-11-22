@@ -1146,3 +1146,21 @@ test("buildResults surfaces act-fold-tab-groups and act-unfold-tab-groups based 
   assert.equal(allCollapsed.items.some((i) => i.id === "act-fold-tab-groups"), false);
   assert.ok(allCollapsed.items.some((i) => i.id === "act-unfold-tab-groups"));
 });
+
+test("buildResults surfaces act-toggle-vertical-sidebar and reflects verticalSidebar state", () => {
+  const centered = Core.buildResults({ tabs: [], verticalSidebar: false }, "> sidebar", "all");
+  const dockAct = centered.items.find((i) => i.id === "act-toggle-vertical-sidebar");
+  assert.ok(dockAct, "act-toggle-vertical-sidebar should match 'sidebar'");
+  assert.equal(dockAct.title, "Switch to Vertical Sidebar");
+  assert.equal(dockAct.enterVerb, "Dock");
+  assert.deepEqual(dockAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "TOGGLE_VERTICAL_SIDEBAR" }
+  });
+
+  const sidebar = Core.buildResults({ tabs: [], verticalSidebar: true }, "> vertical", "all");
+  const centerAct = sidebar.items.find((i) => i.id === "act-toggle-vertical-sidebar");
+  assert.ok(centerAct, "act-toggle-vertical-sidebar should match 'vertical'");
+  assert.equal(centerAct.title, "Switch to Centered Palette");
+  assert.equal(centerAct.enterVerb, "Center");
+});

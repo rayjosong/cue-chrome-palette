@@ -691,3 +691,62 @@ test("palette-ui group popover includes Copy Group Tabs as Markdown and Save Gro
   );
 });
 
+test("palette-ui applies qc-is-sidebar class from data and toggles it live without closing", async () => {
+  const data = {
+    activeTab: null,
+    tabs: [],
+    tabGroups: [],
+    closedTabs: [],
+    quickLinks: [],
+    chromePages: [],
+    bookmarks: [],
+    history: [],
+    frecency: {},
+    themes: [],
+    themesPermission: false,
+    extensions: [],
+    downloads: [],
+    windows: [],
+    verticalSidebar: false
+  };
+  const ui = mountPalette({
+    isPopup: false,
+    data,
+    onExecuteAction: (payload) => {
+      if (payload?.action === "TOGGLE_VERTICAL_SIDEBAR") {
+        data.verticalSidebar = !data.verticalSidebar;
+        return {
+          ok: true,
+          verticalSidebar: data.verticalSidebar,
+          toast: data.verticalSidebar ? "Switched to vertical sidebar" : "Switched to centered palette"
+        };
+      }
+      return { ok: true };
+    }
+  });
+  await flush();
+
+  const backdrop = ui.container.querySelector(".qc-backdrop");
+  assert.equal(backdrop.classList.contains("qc-is-sidebar"), false);
+
+  const input = ui.getInput();
+  input.value = "> sidebar";
+  input.dispatchEvent({ type: "input" });
+  await flush();
+
+  ui.getModal().dispatchEvent({ type: "keydown", key: "Enter" });
+  await flush();
+
+  const toggleCall = ui.sentMessages.find((m) => m.type === "EXECUTE_ACTION");
+  assert.ok(toggleCall, `Expected EXECUTE_ACTION, got: ${JSON.stringify(ui.sentMessages)}`);
+  assert.deepEqual(JSON.parse(JSON.stringify(toggleCall.payload)), { action: "TOGGLE_VERTICAL_SIDEBAR" });
+  assert.equal(backdrop.classList.contains("qc-is-sidebar"), true);
+  assert.equal(ui.getClosedCount(), 0, "toggling sidebar should keep palette open");
+
+  // Toggle back to centered
+  ui.getModal().dispatchEvent({ type: "keydown", key: "Enter" });
+  await flush();
+  assert.equal(backdrop.classList.contains("qc-is-sidebar"), false);
+  assert.equal(ui.getClosedCount(), 0);
+});
+
