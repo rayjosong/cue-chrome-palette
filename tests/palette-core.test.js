@@ -1090,3 +1090,59 @@ test("buildStaticActions exposes auto-group, copy window/group, bookmark group, 
   assert.equal(minimalActions.find((a) => a.id === "act-discard-others").title, "Suspend Other Background Tabs");
 });
 
+test("buildResults surfaces act-fold-tab-groups and act-unfold-tab-groups based on group collapse state", () => {
+  const base = {
+    activeTab: { id: 1, windowId: 10, title: "Active", url: "https://example.com", groupId: 5 },
+    tabs: [
+      { id: 1, windowId: 10, title: "Active", url: "https://example.com", active: true, pinned: false, currentWindow: true }
+    ],
+    tabGroups: [
+      { id: 5, title: "Work", color: "blue", collapsed: false, currentWindow: true, tabCount: 2 },
+      { id: 6, title: "Research", color: "green", collapsed: true, currentWindow: true, tabCount: 3 },
+      { id: 7, title: "Other Win", color: "red", collapsed: false, currentWindow: false, tabCount: 1 }
+    ]
+  };
+
+  const mixedRes = Core.buildResults(base, ">", "all");
+  const foldAct = mixedRes.items.find((i) => i.id === "act-fold-tab-groups");
+  const unfoldAct = mixedRes.items.find((i) => i.id === "act-unfold-tab-groups");
+  assert.ok(foldAct, "act-fold-tab-groups should appear when expanded groups exist");
+  assert.equal(foldAct.title, "Fold All Tab Groups");
+  assert.equal(foldAct.subtitle, "Collapse 1 expanded tab group(s) in this window");
+  assert.deepEqual(foldAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "FOLD_ALL_TAB_GROUPS" }
+  });
+
+  assert.ok(unfoldAct, "act-unfold-tab-groups should appear when collapsed groups exist");
+  assert.equal(unfoldAct.title, "Unfold All Tab Groups");
+  assert.equal(unfoldAct.subtitle, "Expand 1 folded tab group(s) in this window");
+  assert.deepEqual(unfoldAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "UNFOLD_ALL_TAB_GROUPS" }
+  });
+
+  // Searchability for both fold/unfold and collapse/expand
+  assert.ok(Core.buildResults(base, "> fold", "all").items.some((i) => i.id === "act-fold-tab-groups"));
+  assert.ok(Core.buildResults(base, "> collapse", "all").items.some((i) => i.id === "act-fold-tab-groups"));
+  assert.ok(Core.buildResults(base, "> unfold", "all").items.some((i) => i.id === "act-unfold-tab-groups"));
+  assert.ok(Core.buildResults(base, "> expand", "all").items.some((i) => i.id === "act-unfold-tab-groups"));
+
+  // Only expanded groups -> only fold appears
+  const allExpanded = Core.buildResults(
+    { ...base, tabGroups: [{ id: 5, title: "Work", color: "blue", collapsed: false, currentWindow: true, tabCount: 2 }] },
+    ">",
+    "all"
+  );
+  assert.ok(allExpanded.items.some((i) => i.id === "act-fold-tab-groups"));
+  assert.equal(allExpanded.items.some((i) => i.id === "act-unfold-tab-groups"), false);
+
+  // Only collapsed groups -> only unfold appears
+  const allCollapsed = Core.buildResults(
+    { ...base, tabGroups: [{ id: 6, title: "Research", color: "green", collapsed: true, currentWindow: true, tabCount: 3 }] },
+    ">",
+    "all"
+  );
+  assert.equal(allCollapsed.items.some((i) => i.id === "act-fold-tab-groups"), false);
+  assert.ok(allCollapsed.items.some((i) => i.id === "act-unfold-tab-groups"));
+});

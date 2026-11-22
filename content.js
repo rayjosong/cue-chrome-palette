@@ -297,7 +297,7 @@
     iframeEl = currentIframe;
     currentIframe.setAttribute("allow", "clipboard-write");
     currentIframe.style.cssText =
-      "position:fixed;inset:0;width:100vw;height:100vh;border:0;background:transparent;z-index:2147483647;color-scheme:normal;";
+      "position:fixed;inset:0;width:100vw;height:100vh;border:0;background:transparent;z-index:2147483647;color-scheme:light dark;";
 
     const channel = new MessageChannel();
     const currentPort = channel.port1;

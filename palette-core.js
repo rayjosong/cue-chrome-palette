@@ -692,6 +692,7 @@
     const allTabs = Array.isArray(contextData) ? contextData : (contextData?.tabs || []);
     const windows = Array.isArray(contextData) ? [] : (contextData?.windows || []);
     const bookmarks = Array.isArray(contextData) ? [] : (contextData?.bookmarks || []);
+    const tabGroupsList = Array.isArray(contextData) ? [] : (contextData?.tabGroups || []);
     const actions = [];
 
     const audibleTab = allTabs.find((t) => t.audible);
@@ -1136,7 +1137,6 @@
         );
       }
 
-      const tabGroupsList = Array.isArray(contextData) ? [] : (contextData?.tabGroups || []);
       const ungroupedUnpinnedCount = allTabs.filter(
         (t) => !t.pinned && (t.groupId == null || t.groupId < 0)
       ).length;
@@ -1247,6 +1247,52 @@
         actionDescriptor: {
           type: "EXECUTE_ACTION",
           payload: { action: "AUTO_GROUP_BY_DOMAIN" }
+        }
+      });
+    }
+
+    const currentWindowGroups = tabGroupsList.filter((g) => g.currentWindow !== false);
+    const expandedGroupsCount = currentWindowGroups.filter((g) => !g.collapsed).length;
+    const collapsedGroupsCount = currentWindowGroups.filter((g) => Boolean(g.collapsed)).length;
+
+    if (expandedGroupsCount > 0) {
+      actions.push({
+        id: "act-fold-tab-groups",
+        kind: "action",
+        section: "Actions",
+        title: "Fold All Tab Groups",
+        subtitle: `Collapse ${expandedGroupsCount} expanded tab group(s) in this window`,
+        badge: "Group",
+        badgeClass: "qc-badge-group",
+        iconClass: "qc-icon-group",
+        iconName: "layers",
+        enterVerb: "Fold",
+        priority: 11.4,
+        searchText: "fold collapse minimize hide all tab groups",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "FOLD_ALL_TAB_GROUPS" }
+        }
+      });
+    }
+
+    if (collapsedGroupsCount > 0) {
+      actions.push({
+        id: "act-unfold-tab-groups",
+        kind: "action",
+        section: "Actions",
+        title: "Unfold All Tab Groups",
+        subtitle: `Expand ${collapsedGroupsCount} folded tab group(s) in this window`,
+        badge: "Group",
+        badgeClass: "qc-badge-group",
+        iconClass: "qc-icon-group",
+        iconName: "layers",
+        enterVerb: "Unfold",
+        priority: 11.3,
+        searchText: "unfold expand open show all tab groups",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "UNFOLD_ALL_TAB_GROUPS" }
         }
       });
     }

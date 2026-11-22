@@ -720,3 +720,31 @@ test("EXECUTE_ACTION CLOSE_TABS_TO_RIGHT closes unpinned tabs to the right by in
   assert.deepEqual(plain(noIdxHarness.calls.tabsRemove[0]), [12]);
 });
 
+test("EXECUTE_ACTION FOLD_ALL_TAB_GROUPS and UNFOLD_ALL_TAB_GROUPS update current-window groups", async () => {
+  const { sendMessage, calls } = createChromeHarness({
+    tabGroups: [
+      { id: 10, title: "Work", color: "blue", collapsed: false, windowId: 100 },
+      { id: 11, title: "Docs", color: "green", collapsed: true, windowId: 100 },
+      { id: 12, title: "Other", color: "red", collapsed: false, windowId: 200 }
+    ]
+  });
+
+  const foldRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "FOLD_ALL_TAB_GROUPS" }
+  });
+  assert.equal(foldRes.ok, true);
+  assert.equal(foldRes.toast, "Folded 1 tab group(s)");
+  assert.deepEqual(plain(calls.tabGroupsUpdate), [{ id: 10, props: { collapsed: true } }]);
+
+  const unfoldRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "UNFOLD_ALL_TAB_GROUPS" }
+  });
+  assert.equal(unfoldRes.ok, true);
+  assert.equal(unfoldRes.toast, "Unfolded 1 tab group(s)");
+  assert.deepEqual(plain(calls.tabGroupsUpdate), [
+    { id: 10, props: { collapsed: true } },
+    { id: 11, props: { collapsed: false } }
+  ]);
+});

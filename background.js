@@ -715,6 +715,29 @@ async function executeAction(payload) {
       await chrome.tabGroups.update(payload.groupId, { collapsed: !grp.collapsed });
       return { ok: true };
     }
+    case "FOLD_ALL_TAB_GROUPS":
+    case "UNFOLD_ALL_TAB_GROUPS": {
+      if (!chrome.tabGroups) return { ok: false, error: "Tab groups API unavailable" };
+      const collapsed = payload.action === "FOLD_ALL_TAB_GROUPS";
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const queryOpts = active ? { windowId: active.windowId } : {};
+      const groups = await chrome.tabGroups.query(queryOpts).catch(() => []);
+      const windowGroups = active ? groups.filter((g) => g.windowId === active.windowId) : groups;
+      const targets = windowGroups.filter((g) => Boolean(g.collapsed) !== collapsed);
+      if (targets.length === 0) {
+        return {
+          ok: true,
+          toast: collapsed ? "All tab groups are already folded" : "All tab groups are already unfolded"
+        };
+      }
+      await Promise.all(targets.map((g) => chrome.tabGroups.update(g.id, { collapsed })));
+      return {
+        ok: true,
+        toast: collapsed
+          ? `Folded ${targets.length} tab group(s)`
+          : `Unfolded ${targets.length} tab group(s)`
+      };
+    }
     case "GROUP_CURRENT_TAB": {
       const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (active) {

@@ -491,3 +491,17 @@ test("content.js blocks host-page arrow keys and reclaims focus while palette is
   assert.equal(preventedAfterClose, false, "ArrowDown must not be prevented after palette closes");
   assert.equal(stoppedAfterClose, false, "ArrowDown must not be stopped after palette closes");
 });
+
+test("iframe element and palette-frame.html share matching color-scheme: light dark for transparency", () => {
+  const h = createContentHarness();
+  h.sendRuntimeMessage({ type: "TOGGLE_PALETTE" });
+
+  const iframe = h.getIframeEl();
+  assert.ok(iframe, "iframe should be mounted");
+  assert.match(iframe.style.cssText, /background:\s*transparent/i);
+  assert.match(iframe.style.cssText, /color-scheme:\s*light dark/i);
+
+  const frameHtml = fs.readFileSync(path.join(ROOT, "palette-frame.html"), "utf8");
+  assert.match(frameHtml, /<meta\s+name="color-scheme"\s+content="light dark"\s*\/?>/i);
+  assert.match(frameHtml, /color-scheme:\s*light dark/i);
+});
