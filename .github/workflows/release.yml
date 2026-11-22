@@ -150,7 +150,7 @@ jobs:
           TAG: ${{ needs.test.outputs.tag }}
         run: |
           ZIP_NAME="cue-chrome-palette-${TAG}.zip"
-          zip -r "$ZIP_NAME" manifest.json *.js *.html *.css
+          zip -r "$ZIP_NAME" manifest.json *.js *.html *.css icons/*.png
 
       - name: Create GitHub Release
         env:
