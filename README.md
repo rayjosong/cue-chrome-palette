@@ -1,6 +1,6 @@
 # Cue — Chrome Command Palette
 
-A fast, no-frills Manifest V3 command palette for Google Chrome (`⌘⇧K` / `Ctrl+Shift+K`) — no account, no integrations, no data leaves your device. Built for company computers as much as personal ones. Featuring Dark Indigo Glass & Adaptive Light UI, MRU tab switching, interactive tab groups, custom bangs, and optional Chrome theme switching.
+A fast, no-frills Manifest V3 command palette for Google Chrome (`⌘⇧K` / `Ctrl+Shift+K`) — no account, no integrations, tabs, bookmarks, and history never leave Chrome. Built for company computers as much as personal ones. Featuring Dark Indigo Glass & Adaptive Light UI, MRU tab switching, interactive tab groups, custom bangs, and optional Chrome theme switching.
 
 ---
 
@@ -92,4 +92,5 @@ See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday power wor
 ```bash
 node --test tests/*.test.js
 ```
+
 
