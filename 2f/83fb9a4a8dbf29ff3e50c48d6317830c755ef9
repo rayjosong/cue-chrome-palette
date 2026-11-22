@@ -1,0 +1,28 @@
+background.js
+  h_bd07e1019ba52e 206-210,376,381,481,748-756
+palette-core.js
+  h_bd07e1019ba52e 1594-1617
+palette-icons.js
+  h_bd07e1019ba52e 53-56
+palette-ui.js
+  h_bd07e1019ba52e 490-497,514,1810-1812
+palette.css
+  h_bd07e1019ba52e 247-294,1049
+tests/background.test.js
+  h_bd07e1019ba52e 125,128,752-778
+tests/palette-core.test.js
+  h_bd07e1019ba52e 1149-1166
+tests/palette-ui.test.js
+  h_bd07e1019ba52e 694-752
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2f83fb9a4a8dbf29ff3e50c48d6317830c755ef9",
+  "prompts": {},
+  "humans": {
+    "h_bd07e1019ba52e": {
+      "author": "rayjosong <rayjosong@users.noreply.github.com>"
+    }
+  }
+}
