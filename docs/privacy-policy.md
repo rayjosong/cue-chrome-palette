@@ -17,7 +17,7 @@ Cue runs entirely in your browser. Everything it reads is processed on your devi
 - **Downloads** — to list your 30 most recent downloads so you can open them from the palette. Cue only reads the list; it does not read file contents.
 - **Storage** — to remember your settings, custom bang shortcuts, and frecency ranking (which results you use most), so the palette gets faster for you over time.
 
-Cue injects a content script into web pages (`<all_urls>`) only to draw the palette overlay on the page you are viewing. It does not read page contents, form inputs, or passwords, and it does not modify pages.
+When you invoke the palette (Cmd+Shift+K, or the toolbar icon), Cue injects a content script into the tab you are viewing, only to draw the palette overlay. The script is not loaded on any page until you invoke it. It does not read page contents, form inputs, or passwords, and it does not modify pages.
 
 ## The one exception: Chrome Sync
 
