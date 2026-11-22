@@ -256,7 +256,17 @@ function createContentHarness() {
 
 test("manifest.json exposes only palette-frame.html with use_dynamic_url: true", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8"));
-  assert.deepEqual(manifest.content_scripts[0].js, ["content.js"]);
+  assert.equal(
+    manifest.content_scripts,
+    undefined,
+    "content_scripts must be absent: content.js is injected on demand, not pre-loaded"
+  );
+  const backgroundCode = fs.readFileSync(path.join(ROOT, "background.js"), "utf8");
+  assert.ok(
+    backgroundCode.includes('chrome.scripting.executeScript') &&
+      backgroundCode.includes('files: ["content.js"]'),
+    "background.js must inject content.js on demand via chrome.scripting.executeScript"
+  );
   assert.equal(manifest.web_accessible_resources.length, 1);
   assert.deepEqual(manifest.web_accessible_resources[0].resources, ["palette-frame.html"]);
   assert.equal(manifest.web_accessible_resources[0].use_dynamic_url, true);
