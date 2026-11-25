@@ -90,10 +90,15 @@ See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday power wor
 
 ## Feedback, Issues & Support
 
-- **Share / Star:** [github.com/rayjosong/cue-chrome-palette](https://github.com/rayjosong/cue-chrome-palette)
-- **Report a bug or request a feature:** [Open an issue on GitHub](https://github.com/rayjosong/cue-chrome-palette/issues)
-- **Support Cue:** [Buy Me a Coffee](https://buymeacoffee.com/crimpkey)
-- You can also jump straight to the GitHub repo, Issues page, or Buy Me a Coffee from inside Cue via the footer icons, **Options → About, Feedback & Share**, or `> report issue` / `> github` / `> coffee`.
+[![Star on GitHub](https://img.shields.io/badge/Star_on_GitHub-24292e?style=for-the-badge&logo=github&logoColor=white)](https://github.com/rayjosong/cue-chrome-palette)
+[![Report an Issue](https://img.shields.io/badge/Report_an_Issue-0969da?style=for-the-badge&logo=github&logoColor=white)](https://github.com/rayjosong/cue-chrome-palette/issues)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/crimpkey)
+
+> [!TIP]
+> **In-app quick access:** You can also jump straight to GitHub, Issues, or Buy Me a Coffee directly from inside Cue:
+> - Click the footer icons at the bottom of the palette
+> - Run `> github`, `> report issue`, or `> coffee` from the command bar
+> - Navigate to **Options → About, Feedback & Share**
 
 ## Tests
 
