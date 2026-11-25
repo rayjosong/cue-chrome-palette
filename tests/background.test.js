@@ -238,7 +238,11 @@ function createChromeHarness(overrides = {}) {
       remove: async () => {}
     },
     history: {
-      search: async () => state.historyItems
+      search: async (q) => {
+        calls.historySearch = calls.historySearch || [];
+        calls.historySearch.push(q);
+        return state.historyItems;
+      }
     },
     sessions: {
       getRecentlyClosed: async () => state.sessions
@@ -926,4 +930,12 @@ test("idleTabAutoAction automatically unloads or archives idle tabs on tab activ
   assert.deepEqual(plain(archiveHarness.calls.tabsRemove[0]), [2]);
   assert.equal(archiveHarness.state.archivedTabs.length, 1);
   assert.equal(archiveHarness.state.archivedTabs[0].url, "https://stale.com");
+});
+
+test("SEARCH_HISTORY strips mode prefixes and searches up to 100 items", async () => {
+  const { sendMessage, calls } = createChromeHarness();
+  const res = await sendMessage({ type: "SEARCH_HISTORY", query: "/h nodejs" });
+  assert.equal(res.ok, true);
+  assert.equal(calls.historySearch[0].text, "nodejs");
+  assert.equal(calls.historySearch[0].maxResults, 100);
 });

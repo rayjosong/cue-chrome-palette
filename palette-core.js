@@ -306,7 +306,430 @@
     };
   }
 
-  function singleTokenMatch(t, tok, usedIndices) {
+  const BOUNDARY_SEP_RE = /[\s/\\\-_.:?&=#()[\]{},;"'|·—–+@]/;
+  const COMBINING_MARKS_RE = /[\u0300-\u036f]/g;
+  const SCHEME_EXPLICIT_RE = /(https?:|chrome:|edge:|file:|ftp:|www\.)/i;
+
+  // Fast ASCII separator lookup table (avoids regex overhead in tight loops)
+  const ASCII_SEP = new Uint8Array(128);
+  for (const ch of " \t\n\r\f\v/\\-_.:?&=#()[]{},;\"'|+@") {
+    ASCII_SEP[ch.charCodeAt(0)] = 1;
+  }
+
+  function isSeparatorCode(code) {
+    if (code < 128) return ASCII_SEP[code] === 1;
+    return code === 0x00b7 || code === 0x2014 || code === 0x2013 || code === 0x00a0;
+  }
+
+  function isAsciiUpper(code) {
+    return code >= 65 && code <= 90;
+  }
+
+  function isAsciiLower(code) {
+    return code >= 97 && code <= 122;
+  }
+
+  function isAsciiDigit(code) {
+    return code >= 48 && code <= 57;
+  }
+
+  function isAsciiLetter(code) {
+    return isAsciiUpper(code) || isAsciiLower(code);
+  }
+
+  function prepareText(str) {
+    const raw = typeof str === "string" ? str : String(str || "");
+    if (!raw) return { raw: "", lower: "", indexMap: null, boundaries: new Uint8Array(0) };
+
+    let isAscii = true;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw.charCodeAt(i) > 127) {
+        isAscii = false;
+        break;
+      }
+    }
+
+    let lower;
+    let indexMap = null;
+    if (isAscii) {
+      lower = raw.toLowerCase();
+    } else {
+      lower = "";
+      indexMap = [];
+      for (let i = 0; i < raw.length; i++) {
+        const ch = raw[i];
+        if (ch >= "\u0300" && ch <= "\u036f") continue;
+        const folded = ch.normalize("NFD").replace(COMBINING_MARKS_RE, "");
+        const base = (folded || ch).toLowerCase();
+        for (let k = 0; k < base.length; k++) {
+          lower += base[k];
+          indexMap.push(i);
+        }
+      }
+    }
+
+    const len = lower.length;
+    const boundaries = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      if (i === 0) {
+        boundaries[i] = 1;
+        continue;
+      }
+      const rawIdx = indexMap ? indexMap[i] : i;
+      const prevRawIdx = indexMap ? indexMap[i - 1] : i - 1;
+      const prevCode = raw.charCodeAt(prevRawIdx);
+      const curCode = raw.charCodeAt(rawIdx);
+      if (isSeparatorCode(prevCode)) {
+        boundaries[i] = 1;
+        continue;
+      }
+      if (isAsciiLower(prevCode) && isAsciiUpper(curCode)) {
+        boundaries[i] = 1;
+        continue;
+      }
+      if (isAsciiUpper(prevCode) && isAsciiUpper(curCode) && rawIdx + 1 < raw.length && isAsciiLower(raw.charCodeAt(rawIdx + 1))) {
+        boundaries[i] = 1;
+        continue;
+      }
+      if ((isAsciiLetter(prevCode) && isAsciiDigit(curCode)) || (isAsciiDigit(prevCode) && isAsciiLetter(curCode))) {
+        boundaries[i] = 1;
+      }
+    }
+
+    return { raw, lower, indexMap, boundaries };
+  }
+
+  function mapIndices(indices, indexMap) {
+    if (!indexMap || !indices.length) return indices;
+    const seen = new Set();
+    const out = [];
+    for (let i = 0; i < indices.length; i++) {
+      const mapped = indexMap[indices[i]];
+      if (mapped !== undefined && !seen.has(mapped)) {
+        seen.add(mapped);
+        out.push(mapped);
+      }
+    }
+    return out;
+  }
+
+  function normalizeQueryStr(query) {
+    if (!query || typeof query !== "string") return "";
+    const trimmed = query.trim();
+    if (!trimmed) return "";
+    let isAscii = true;
+    for (let i = 0; i < trimmed.length; i++) {
+      if (trimmed.charCodeAt(i) > 127) {
+        isAscii = false;
+        break;
+      }
+    }
+    if (isAscii) return trimmed.toLowerCase();
+    return trimmed.normalize("NFD").replace(COMBINING_MARKS_RE, "").toLowerCase();
+  }
+
+  // Reusable scratch rows for Damerau-Levenshtein (avoids per-call allocations)
+  const DL_ROW_A = new Int32Array(32);
+  const DL_ROW_B = new Int32Array(32);
+  const DL_ROW_C = new Int32Array(32);
+
+  function damerauLevenshtein(a, b, maxDist) {
+    const la = a.length;
+    const lb = b.length;
+    if (Math.abs(la - lb) > maxDist) return maxDist + 1;
+    if (a === b) return 0;
+    if (lb >= 32) return maxDist + 1;
+
+    let prevPrev = DL_ROW_C;
+    let prev = DL_ROW_A;
+    let curr = DL_ROW_B;
+    for (let j = 0; j <= lb; j++) prev[j] = j;
+
+    for (let i = 1; i <= la; i++) {
+      curr[0] = i;
+      let rowMin = i;
+      const ai = a.charCodeAt(i - 1);
+      for (let j = 1; j <= lb; j++) {
+        const bj = b.charCodeAt(j - 1);
+        const cost = ai === bj ? 0 : 1;
+        let val = prev[j] + 1;
+        const ins = curr[j - 1] + 1;
+        if (ins < val) val = ins;
+        const sub = prev[j - 1] + cost;
+        if (sub < val) val = sub;
+        if (i > 1 && j > 1 && ai === b.charCodeAt(j - 2) && a.charCodeAt(i - 2) === bj) {
+          const trans = prevPrev[j - 2] + 1;
+          if (trans < val) val = trans;
+        }
+        curr[j] = val;
+        if (val < rowMin) rowMin = val;
+      }
+      if (rowMin > maxDist) return maxDist + 1;
+      const tmp = prevPrev;
+      prevPrev = prev;
+      prev = curr;
+      curr = tmp;
+    }
+    return prev[lb];
+  }
+
+  function findOptimalSubsequence(t, tok, boundaries, usedIndices, allowOverlap) {
+    const m = tok.length;
+    if (m < 2) return null;
+    const n = Math.min(t.length, 256);
+    if (n < m) return null;
+
+    // Fast linear feasibility check before DP
+    let qi = 0;
+    for (let ti = 0; ti < n && qi < m; ti++) {
+      if (!allowOverlap && usedIndices && usedIndices.has(ti)) continue;
+      if (t.charCodeAt(ti) === tok.charCodeAt(qi)) qi++;
+    }
+    if (qi < m) return null;
+
+    // Collect candidate positions for each query character
+    const pos = new Array(m);
+    for (let i = 0; i < m; i++) {
+      const ch = tok.charCodeAt(i);
+      const list = [];
+      for (let j = 0; j < n; j++) {
+        if (!allowOverlap && usedIndices && usedIndices.has(j)) continue;
+        if (t.charCodeAt(j) === ch) list.push(j);
+      }
+      if (!list.length) return null;
+      pos[i] = list;
+    }
+
+    const dp = new Array(m);
+    const prevIdx = new Array(m);
+    const runLen = new Array(m);
+
+    // Base row (i = 0) — integer weights (10x scaled) for exact deterministic tie-breaking
+    dp[0] = new Int32Array(pos[0].length);
+    prevIdx[0] = new Int32Array(pos[0].length);
+    runLen[0] = new Int32Array(pos[0].length);
+    for (let p = 0; p < pos[0].length; p++) {
+      const j = pos[0][p];
+      dp[0][p] = 100 + (j === 0 ? 160 : boundaries[j] ? 140 : 0) - Math.min(j, 20) * 5;
+      prevIdx[0][p] = -1;
+      runLen[0][p] = 1;
+    }
+
+    // DP transitions
+    const NEG_INF = -1000000000;
+    for (let i = 1; i < m; i++) {
+      const curList = pos[i];
+      const prevList = pos[i - 1];
+      dp[i] = new Int32Array(curList.length);
+      prevIdx[i] = new Int32Array(curList.length);
+      runLen[i] = new Int32Array(curList.length);
+
+      for (let p = 0; p < curList.length; p++) {
+        const j = curList[p];
+        const isBnd = boundaries[j] === 1;
+        let best = NEG_INF;
+        let bestK = -1;
+        let bestRun = 1;
+
+        for (let k = 0; k < prevList.length; k++) {
+          const pj = prevList[k];
+          if (pj >= j) break;
+          const prevScore = dp[i - 1][k];
+          if (prevScore === NEG_INF) continue;
+
+          const gap = j - pj - 1;
+          let delta;
+          let nextRun;
+          if (gap === 0) {
+            nextRun = runLen[i - 1][k] + 1;
+            delta = 100 + 120 + Math.min(nextRun, 5) * 20 + (isBnd ? 60 : 0);
+          } else if (isBnd) {
+            nextRun = 1;
+            delta = 100 + 140 - (15 + Math.min(gap, 8) * 6);
+          } else {
+            nextRun = 1;
+            delta = 100 - (30 + Math.min(gap, 12) * 16 + Math.max(0, gap - 12) * 6);
+          }
+
+          const cand = prevScore + delta;
+          if (cand > best) {
+            best = cand;
+            bestK = k;
+            bestRun = nextRun;
+          }
+        }
+
+        dp[i][p] = best;
+        prevIdx[i][p] = bestK;
+        runLen[i][p] = bestRun;
+      }
+    }
+
+    // Find best ending position
+    let bestEnd = -1;
+    let bestScore = NEG_INF;
+    const lastRow = dp[m - 1];
+    for (let p = 0; p < lastRow.length; p++) {
+      if (lastRow[p] > bestScore) {
+        bestScore = lastRow[p];
+        bestEnd = p;
+      }
+    }
+    if (bestEnd === -1 || bestScore === NEG_INF) return null;
+
+    const indices = new Array(m);
+    let curP = bestEnd;
+    for (let i = m - 1; i >= 0; i--) {
+      indices[i] = pos[i][curP];
+      curP = prevIdx[i][curP];
+    }
+
+    // Anti-noise quality gate: reject scattered random letter matches in long strings/URLs
+    const span = indices[m - 1] - indices[0] + 1;
+    const firstIsBnd = boundaries[indices[0]] === 1;
+    let bndCount = 0;
+    let consecCount = 0;
+    let maxNonBndGap = 0;
+    let maxBndGap = 0;
+    let maxSkippedWords = 0;
+
+    for (let i = 0; i < m; i++) {
+      if (boundaries[indices[i]] === 1) bndCount++;
+      if (i > 0) {
+        const prev = indices[i - 1];
+        const cur = indices[i];
+        const gap = cur - prev - 1;
+        if (gap === 0) {
+          consecCount++;
+        } else if (boundaries[cur] === 1) {
+          if (gap > maxBndGap) maxBndGap = gap;
+          let skippedWords = 0;
+          for (let k = prev + 1; k < cur; k++) {
+            if (boundaries[k] === 1) skippedWords++;
+          }
+          if (skippedWords > maxSkippedWords) maxSkippedWords = skippedWords;
+        } else if (gap > maxNonBndGap) {
+          maxNonBndGap = gap;
+        }
+      }
+    }
+
+    if (m === 2) {
+      const gap = indices[1] - indices[0] - 1;
+      const secondIsBnd = boundaries[indices[1]] === 1;
+      if (!firstIsBnd || (!secondIsBnd && gap > 4) || (secondIsBnd && (gap > 14 || maxSkippedWords > 2))) {
+        return null;
+      }
+    } else {
+      const density = m / span;
+      const bndRatio = bndCount / m;
+      if (bndRatio >= 0.75) {
+        if (span > m * 14 || maxBndGap > 14 || maxNonBndGap > 6 || maxSkippedWords > 2) return null;
+      } else {
+        if (!firstIsBnd && consecCount < 1) return null;
+        if (density < 0.25 && !(bndCount >= 2 && density >= 0.2)) return null;
+        if (maxNonBndGap > 8 || maxBndGap > 14 || maxSkippedWords > 2) return null;
+      }
+    }
+
+    const density = m / span;
+    const bndRatio = bndCount / m;
+    const consecRatio = consecCount / Math.max(1, m - 1);
+    const posPenalty = Math.min(indices[0], 16) * 0.25;
+    const score = Math.round(33 + bndRatio * 12 + consecRatio * 7 + density * 6 - posPenalty);
+    return {
+      score: Math.min(56, Math.max(32, score)),
+      indices,
+      matchType: "subsequence"
+    };
+  }
+
+  function findTypoMatch(t, tok, boundaries, usedIndices) {
+    const m = tok.length;
+    if (m < 4 || m > 24) return null;
+    const maxDist = m >= 7 ? 2 : 1;
+    const n = Math.min(t.length, 256);
+    const tok0 = tok.charCodeAt(0);
+    const tok1 = tok.charCodeAt(1);
+    const tok2 = tok.charCodeAt(2);
+
+    let best = null;
+    let wStart = -1;
+    for (let i = 0; i <= n; i++) {
+      const isAlphaNum = i < n && !isSeparatorCode(t.charCodeAt(i));
+      if (isAlphaNum) {
+        if (wStart === -1) wStart = i;
+      } else if (wStart !== -1) {
+        const start = wStart;
+        const end = i;
+        wStart = -1;
+        const len = end - start;
+        if (len < m - maxDist || len > 30) continue;
+
+        // Fast first-char pre-filter before slicing or running DP
+        const w0 = t.charCodeAt(start);
+        const w1 = len > 1 ? t.charCodeAt(start + 1) : -1;
+        if (m <= 5) {
+          if (w0 !== tok0 && !(w0 === tok1 && w1 === tok0)) continue;
+        } else if (w0 !== tok0 && w0 !== tok1 && w1 !== tok0 && w1 !== tok1 && w0 !== tok2) {
+          continue;
+        }
+
+        if (usedIndices) {
+          let allUsed = true;
+          for (let u = start; u < end; u++) {
+            if (!usedIndices.has(u)) {
+              allUsed = false;
+              break;
+            }
+          }
+          if (allUsed) continue;
+        }
+
+        const word = t.slice(start, end);
+        let dist = maxDist + 1;
+        let matchLen = len;
+        let isPrefixTypo = false;
+
+        if (Math.abs(len - m) <= maxDist) {
+          const dFull = damerauLevenshtein(tok, word, maxDist);
+          if (dFull <= maxDist) {
+            dist = dFull;
+            matchLen = len;
+          }
+        }
+
+        if (dist > 1 && len > m) {
+          const dPref = damerauLevenshtein(tok, word.slice(0, m), 1);
+          if (dPref <= 1) {
+            dist = dPref;
+            matchLen = m;
+            isPrefixTypo = true;
+          }
+        }
+
+        if (dist <= maxDist) {
+          const posPenalty = Math.min(start, 16) * 0.2;
+          const startBonus = start === 0 ? 2 : boundaries[start] === 1 ? 1 : 0;
+          const base = dist === 1 ? (isPrefixTypo ? 28 : 32) : 25;
+          const score = Math.max(22, Math.round(base + startBonus - posPenalty));
+          if (!best || score > best.score) {
+            best = {
+              score,
+              indices: Array.from({ length: matchLen }, (_, k) => start + k),
+              matchType: "typo"
+            };
+          }
+        }
+      }
+    }
+
+    return best;
+  }
+
+  function singleTokenMatch(prepared, tok, usedIndices, options = {}) {
+    const t = prepared.lower;
+    const boundaries = prepared.boundaries;
     if (!tok || !t) return { score: 0, indices: [], matchType: "none" };
 
     if (t === tok) {
@@ -318,190 +741,196 @@
       const indices = Array.from({ length: tok.length }, (_, i) => i);
       const hasOverlap = usedIndices && indices.some((i) => usedIndices.has(i));
       if (!hasOverlap) {
-        return { score: 95, indices, matchType: "prefix" };
+        const endIdx = tok.length;
+        const isWholeWord = endIdx === t.length || boundaries[endIdx] === 1 || isSeparatorCode(t.charCodeAt(endIdx));
+        const coverage = tok.length / t.length;
+        const score = Math.min(108, 95 + (isWholeWord ? 4 : 0) + Math.round(coverage * 7));
+        return { score, indices, matchType: "prefix" };
       }
     }
 
-    const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-    const wbRegex = new RegExp(`(^|[/\\-_\\.\\s:])(${escaped})`, "gi");
-    let wbMatch;
-    const wbMatches = [];
-    while ((wbMatch = wbRegex.exec(t)) !== null) {
-      const idx = wbMatch.index + (wbMatch[1] ? wbMatch[1].length : 0);
-      const indices = Array.from({ length: tok.length }, (_, i) => idx + i);
-      wbMatches.push({ idx, indices });
-      wbRegex.lastIndex = wbMatch.index + Math.max(1, wbMatch[1] ? wbMatch[1].length : 1);
-    }
-
     let fromIdx = 0;
+    const wbMatches = [];
     const subMatches = [];
     while (true) {
       const idx = t.indexOf(tok, fromIdx);
       if (idx === -1) break;
       const indices = Array.from({ length: tok.length }, (_, i) => idx + i);
-      subMatches.push({ idx, indices });
+      const endIdx = idx + tok.length;
+      const isWholeWord = endIdx === t.length || boundaries[endIdx] === 1 || isSeparatorCode(t.charCodeAt(endIdx));
+      const entry = { idx, indices, isWholeWord };
+      if (boundaries[idx] === 1) {
+        wbMatches.push(entry);
+      } else {
+        subMatches.push(entry);
+      }
       fromIdx = idx + 1;
     }
 
-    if (wbMatches.length > 0) {
-      const nonOverlapping = usedIndices
-        ? wbMatches.find((m) => !m.indices.some((i) => usedIndices.has(i)))
-        : wbMatches[0];
-      if (nonOverlapping) {
-        return {
-          score: Math.max(76, 90 - Math.min(nonOverlapping.idx, 14)),
-          indices: nonOverlapping.indices,
-          matchType: "boundary"
-        };
+    function pickBestContiguous(matches, isBoundary) {
+      if (!matches.length) return null;
+      const candidates = usedIndices
+        ? matches.filter((m) => !m.indices.some((i) => usedIndices.has(i)))
+        : matches;
+      const pool = candidates.length ? candidates : null;
+      if (!pool) return null;
+      // Prefer whole-word boundary matches, then earliest occurrence
+      let best = pool[0];
+      for (let i = 1; i < pool.length; i++) {
+        if (pool[i].isWholeWord && !best.isWholeWord) {
+          best = pool[i];
+          break;
+        }
       }
+      const coverage = Math.min(1, tok.length / Math.max(1, t.length));
+      if (isBoundary) {
+        const score = Math.min(
+          94,
+          Math.max(76, 88 - Math.min(best.idx, 12)) + (best.isWholeWord ? 4 : 0) + Math.round(coverage * 2)
+        );
+        return { score, indices: best.indices, matchType: "boundary" };
+      }
+      const score = Math.max(60, 72 - Math.min(best.idx, 12)) + Math.round(coverage * 2);
+      return { score, indices: best.indices, matchType: "substring" };
     }
 
-    if (subMatches.length > 0) {
-      const nonOverlapping = usedIndices
-        ? subMatches.find((m) => !m.indices.some((i) => usedIndices.has(i)))
-        : subMatches[0];
-      if (nonOverlapping) {
-        return {
-          score: Math.max(66, 74 - Math.min(nonOverlapping.idx, 8)),
-          indices: nonOverlapping.indices,
-          matchType: "substring"
-        };
-      }
-    }
+    const bestWb = pickBestContiguous(wbMatches, true);
+    if (bestWb) return bestWb;
 
-    if (wbMatches.length > 0) {
+    const bestSub = pickBestContiguous(subMatches, false);
+    if (bestSub) return bestSub;
+
+    // Fallback to overlapping contiguous matches if all occurrences overlapped usedIndices
+    if (usedIndices && wbMatches.length > 0) {
       const best = wbMatches[0];
-      return {
-        score: Math.max(76, 90 - Math.min(best.idx, 14)),
-        indices: best.indices,
-        matchType: "boundary"
-      };
+      const score = Math.min(94, Math.max(76, 88 - Math.min(best.idx, 12)) + (best.isWholeWord ? 4 : 0));
+      return { score, indices: best.indices, matchType: "boundary" };
     }
-
-    if (subMatches.length > 0) {
+    if (usedIndices && subMatches.length > 0) {
       const best = subMatches[0];
-      return {
-        score: Math.max(66, 74 - Math.min(best.idx, 8)),
-        indices: best.indices,
-        matchType: "substring"
-      };
+      return { score: Math.max(60, 72 - Math.min(best.idx, 12)), indices: best.indices, matchType: "substring" };
     }
 
-    function findSubseq(allowOverlap) {
-      let qi = 0;
-      let score = 0;
-      let consecutive = 0;
-      const indices = [];
-      for (let ti = 0; ti < t.length && qi < tok.length; ti++) {
-        if (!allowOverlap && usedIndices && usedIndices.has(ti)) {
-          continue;
-        }
-        if (t[ti] === tok[qi]) {
-          indices.push(ti);
-          qi++;
-          consecutive++;
-          const isBoundary = ti === 0 || /[/\-_.\s:]/.test(t[ti - 1]);
-          score += 2 + consecutive + (isBoundary ? 2 : 0);
-        } else {
-          consecutive = 0;
-        }
+    if (options.allowSubseq !== false) {
+      const subseq =
+        (usedIndices ? findOptimalSubsequence(t, tok, boundaries, usedIndices, false) : null) ||
+        findOptimalSubsequence(t, tok, boundaries, usedIndices, true);
+      if (subseq) {
+        return subseq;
       }
-      return qi === tok.length
-        ? { score: Math.min(52, Math.max(1, score)), indices, matchType: "subsequence" }
-        : null;
     }
 
-    const subseq = (usedIndices ? findSubseq(false) : null) || findSubseq(true);
-    if (subseq) {
-      return subseq;
+    if (options.allowTypo !== false) {
+      const typo = findTypoMatch(t, tok, boundaries, usedIndices);
+      if (typo) {
+        return typo;
+      }
     }
 
     return { score: 0, indices: [], matchType: "none" };
   }
 
-  function fuzzyMatch(text, query) {
-    if (!query) return { score: 1, indices: [] };
-    const t = (text || "").toLowerCase();
-    const q = query.toLowerCase().trim();
-    if (!q) return { score: 1, indices: [] };
+  function matchMultiTokens(prepared, tokens, options = {}) {
+    const tokenResults = [];
+    const usedIndices = new Set();
+    for (let i = 0; i < tokens.length; i++) {
+      const res = singleTokenMatch(prepared, tokens[i], usedIndices, options);
+      if (!res || res.score === 0) {
+        return { score: 0, indices: [] };
+      }
+      for (const idx of res.indices) {
+        usedIndices.add(idx);
+      }
+      tokenResults.push(res);
+    }
+
+    const allIndices = Array.from(usedIndices).sort((a, b) => a - b);
+    const avgScore = tokenResults.reduce((sum, r) => sum + r.score, 0) / tokenResults.length;
+
+    // Reward tokens appearing in typed order and adjacent to each other
+    let inOrder = true;
+    let adjacentPairs = 0;
+    for (let i = 1; i < tokenResults.length; i++) {
+      const prevInds = tokenResults[i - 1].indices;
+      const curInds = tokenResults[i].indices;
+      if (prevInds.length && curInds.length) {
+        const prevStart = prevInds[0];
+        const prevEnd = prevInds[prevInds.length - 1];
+        const curStart = curInds[0];
+        if (curStart < prevStart) {
+          inOrder = false;
+        } else if (curStart - prevEnd <= 3) {
+          adjacentPairs++;
+        }
+      }
+    }
+
+    const hasTypo = tokenResults.some((r) => r.matchType === "typo");
+    const hasSubseq = tokenResults.some((r) => r.matchType === "subsequence");
+    const bonus = (inOrder ? 4 : 0) + Math.min(8, adjacentPairs * 4);
+    let composite = Math.round(avgScore + bonus);
+
+    if (hasTypo) {
+      composite = Math.min(50, Math.max(24, composite));
+    } else if (hasSubseq) {
+      composite = Math.min(72, Math.max(44, composite));
+    } else {
+      composite = Math.min(110, Math.max(64, composite));
+    }
+
+    return { score: composite, indices: allIndices };
+  }
+
+  function fuzzyMatchPrepared(prepared, normQ, tokens, options = {}) {
+    const t = prepared.lower;
     if (!t) return { score: 0, indices: [] };
-    if (t === q) {
-      return { score: 120, indices: Array.from({ length: t.length }, (_, i) => i) };
+
+    if (t === normQ) {
+      const rawIndices = Array.from({ length: t.length }, (_, i) => i);
+      return { score: 120, indices: mapIndices(rawIndices, prepared.indexMap) };
     }
 
-    const tokens = q.split(/\s+/).filter(Boolean);
     if (tokens.length > 1) {
-      const tokenResults = [];
-      const usedIndices = new Set();
-      for (const tok of tokens) {
-        const res = singleTokenMatch(t, tok, usedIndices);
-        if (!res || res.score === 0) {
-          return { score: 0, indices: [] };
-        }
-        for (const i of res.indices) {
-          usedIndices.add(i);
-        }
-        tokenResults.push(res);
-      }
-
-      const allIndices = Array.from(usedIndices).sort((a, b) => a - b);
-      const isAllSubstring = tokenResults.every(
-        (r) =>
-          r.matchType === "exact" ||
-          r.matchType === "prefix" ||
-          r.matchType === "boundary" ||
-          r.matchType === "substring"
-      );
-
-      if (isAllSubstring) {
-        return { score: 65, indices: allIndices };
-      }
-
-      const avgScore = tokenResults.reduce((sum, r) => sum + r.score, 0) / tokenResults.length;
-      const composite = Math.min(64, Math.max(53, 53 + Math.round((avgScore / 100) * 11)));
-      return { score: composite, indices: allIndices };
-    }
-
-    if (t.startsWith(q)) {
-      return { score: 95, indices: Array.from({ length: q.length }, (_, i) => i) };
-    }
-
-    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const wbRegex = new RegExp(`(^|[/\\-_\\.\\s:])${escaped}`, "i");
-    const wbMatch = t.match(wbRegex);
-    if (wbMatch && wbMatch.index !== undefined) {
-      const idx = wbMatch.index + (wbMatch[1] ? wbMatch[1].length : 0);
-      return {
-        score: Math.max(76, 90 - Math.min(idx, 14)),
-        indices: Array.from({ length: q.length }, (_, i) => idx + i)
-      };
-    }
-
-    const idx = t.indexOf(q);
-    if (idx !== -1) {
-      return {
-        score: Math.max(66, 74 - Math.min(idx, 8)),
-        indices: Array.from({ length: q.length }, (_, i) => idx + i)
-      };
-    }
-
-    let qi = 0;
-    let score = 0;
-    let consecutive = 0;
-    const indices = [];
-    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-      if (t[ti] === q[qi]) {
-        indices.push(ti);
-        qi++;
-        consecutive++;
-        const isBoundary = ti === 0 || /[/\-_.\s:]/.test(t[ti - 1]);
-        score += 2 + consecutive + (isBoundary ? 2 : 0);
+      // Check if the full phrase matches contiguously (e.g. "tab group" in "Fold All Tab Groups")
+      const phraseRes = singleTokenMatch(prepared, normQ, null, { allowSubseq: false, allowTypo: false });
+      const multiRes = matchMultiTokens(prepared, tokens, options);
+      let best;
+      if (phraseRes.score > 0 && phraseRes.score >= multiRes.score) {
+        const nonSpaceIndices = phraseRes.indices.filter((i) => !isSeparatorCode(t.charCodeAt(i)));
+        best = { score: phraseRes.score, indices: nonSpaceIndices };
       } else {
-        consecutive = 0;
+        best = multiRes;
+      }
+      if (!best.score) return { score: 0, indices: [] };
+      return { score: best.score, indices: mapIndices(best.indices, prepared.indexMap) };
+    }
+
+    const single = singleTokenMatch(prepared, tokens[0], null, options);
+    if (single.score > 0) {
+      return { score: single.score, indices: mapIndices(single.indices, prepared.indexMap) };
+    }
+
+    // Support punctuation-joined queries like "tab-group" matching "Tab Group"
+    if (/[-_/]/.test(tokens[0])) {
+      const splitTokens = tokens[0].split(/[-_/]+/).filter(Boolean);
+      if (splitTokens.length > 1) {
+        const splitRes = matchMultiTokens(prepared, splitTokens, options);
+        if (splitRes.score > 0) {
+          return { score: splitRes.score, indices: mapIndices(splitRes.indices, prepared.indexMap) };
+        }
       }
     }
-    return qi === q.length ? { score: Math.min(52, Math.max(1, score)), indices } : { score: 0, indices: [] };
+
+    return { score: 0, indices: [] };
+  }
+
+  function fuzzyMatch(text, query, options = {}) {
+    if (!query) return { score: 1, indices: [] };
+    const q = normalizeQueryStr(query);
+    if (!q) return { score: 1, indices: [] };
+    const prepared = prepareText(text);
+    const tokens = q.split(/\s+/).filter(Boolean);
+    return fuzzyMatchPrepared(prepared, q, tokens, options);
   }
 
   function getHighlightRanges(text, query) {
@@ -509,7 +938,42 @@
     const q = (query || "").trim();
     if (!q) return [{ text: str, matched: false }];
 
-    const { score, indices } = fuzzyMatch(str, q);
+    // Avoid highlighting scheme characters (https://) in URLs unless the query references a scheme
+    let searchStr = str;
+    let offset = 0;
+    if (/^https?:\/\//i.test(str) && !SCHEME_EXPLICIT_RE.test(q)) {
+      const schemeEnd = str.indexOf("://") + 3;
+      searchStr = str.slice(schemeEnd);
+      offset = schemeEnd;
+    }
+
+    let { score, indices } = fuzzyMatch(searchStr, q);
+    if (score > 0 && indices.length && offset > 0) {
+      indices = indices.map((i) => i + offset);
+    }
+
+    // For cross-field multi-token queries (e.g. "github pull" where "github" is in URL and "pull" is in title),
+    // highlight whichever query tokens cleanly match this field.
+    if (!score || !indices.length) {
+      const normQ = normalizeQueryStr(q);
+      const tokens = normQ.split(/\s+/).filter(Boolean);
+      if (tokens.length > 1) {
+        const prepared = prepareText(searchStr);
+        const used = new Set();
+        for (const tok of tokens) {
+          const res = singleTokenMatch(prepared, tok, used, { allowTypo: false });
+          if (res.score > 0 && res.indices.length) {
+            for (const i of res.indices) used.add(i);
+          }
+        }
+        if (used.size > 0) {
+          const sorted = Array.from(used).sort((a, b) => a - b);
+          indices = mapIndices(sorted, prepared.indexMap).map((i) => i + offset);
+          score = 1;
+        }
+      }
+    }
+
     if (!score || !indices.length) return [{ text: str, matched: false }];
 
     const markSet = new Set(indices);
@@ -529,6 +993,155 @@
     }
     if (buf) segments.push({ text: buf, matched: currentMatched });
     return segments;
+  }
+
+  function extractUrlParts(rawUrl = "") {
+    if (!rawUrl || typeof rawUrl !== "string") return { host: "", cleanUrl: "" };
+    const trimmed = rawUrl.trim();
+    if (!/^https?:\/\//i.test(trimmed)) {
+      return { host: "", cleanUrl: trimmed };
+    }
+    const withoutScheme = trimmed.replace(/^https?:\/\//i, "");
+    const cleanUrl = withoutScheme.replace(/^www\./i, "");
+    const slashIdx = cleanUrl.search(/[/?#]/);
+    const host = slashIdx === -1 ? cleanUrl : cleanUrl.slice(0, slashIdx);
+    return { host, cleanUrl: cleanUrl.slice(0, 240) };
+  }
+
+  function getSearchPriority(item, mode) {
+    if (!item) return 0;
+    switch (item.kind) {
+      case "tab": {
+        if (item.currentWindow) {
+          if (item.active) return 5.0;
+          const mruBonus = Math.max(0, Math.min(2.0, ((item.priority || 24) - 24) * 0.8));
+          return 8.0 + mruBonus;
+        }
+        return 6.5;
+      }
+      case "group":
+        return item.priority >= 16 ? 6.5 : 5.0;
+      case "bang":
+        return 6.0;
+      case "action": {
+        const base = mode === "commands" ? 5.5 : 4.5;
+        return base + Math.max(-1, Math.min(2, ((item.priority || 10) - 9) * 0.25));
+      }
+      case "closed":
+        return 4.8;
+      case "archived":
+        return 4.6;
+      case "chrome":
+      case "theme":
+      case "extension":
+        return 4.5;
+      case "bookmark":
+        return 4.2;
+      case "download":
+        return 3.8;
+      case "history": {
+        const visitBonus = item.visitCount ? Math.min(2.2, Math.log2(item.visitCount + 1) * 0.55) : 0;
+        return 2.0 + visitBonus;
+      }
+      default:
+        return 3.0;
+    }
+  }
+
+  function scoreItem(item, query, queryTokens = null) {
+    if (!item || !query) return 0;
+    const normQ = normalizeQueryStr(query);
+    if (!normQ) return 0;
+    const tokens = queryTokens || normQ.split(/\s+/).filter(Boolean);
+    const wantsScheme = SCHEME_EXPLICIT_RE.test(normQ);
+
+    const fields = [];
+    if (item.title) {
+      fields.push({ text: item.title, weight: 1.0, prepared: null });
+    }
+
+    const isUrlItem =
+      item.kind === "tab" ||
+      item.kind === "closed" ||
+      item.kind === "archived" ||
+      item.kind === "history" ||
+      item.kind === "bookmark" ||
+      item.kind === "bang" ||
+      item.kind === "chrome" ||
+      item.kind === "download";
+
+    if (isUrlItem) {
+      const rawUrl = item.url || (item.kind === "bookmark" ? "" : item.subtitle) || "";
+      const { host, cleanUrl } = extractUrlParts(rawUrl);
+      if (host) {
+        fields.push({ text: host, weight: 0.94, prepared: null });
+      }
+      if (cleanUrl && cleanUrl !== host) {
+        fields.push({ text: cleanUrl, weight: 0.78, prepared: null });
+      }
+      if (wantsScheme && rawUrl) {
+        fields.push({ text: rawUrl, weight: 0.85, prepared: null });
+      }
+      if (item.folder) {
+        fields.push({ text: item.folder, weight: 0.78, prepared: null });
+      }
+      if (!rawUrl && item.subtitle) {
+        fields.push({ text: item.subtitle, weight: 0.76, prepared: null });
+      }
+    } else if (item.subtitle && !item.ignoreSubtitleSearch) {
+      fields.push({ text: item.subtitle, weight: 0.72, prepared: null });
+    }
+
+    if (item.searchText) {
+      fields.push({
+        text: item.searchText,
+        weight: item.kind === "action" ? 0.88 : 0.76,
+        prepared: null,
+        // searchText is a synonym keyword bag: avoid stitching random subsequence letters across unrelated keywords
+        options: { allowSubseq: false }
+      });
+    }
+
+    let singleFieldBest = 0;
+    for (let i = 0; i < fields.length; i++) {
+      const f = fields[i];
+      if (!f.prepared) f.prepared = prepareText(f.text);
+      const s = fuzzyMatchPrepared(f.prepared, normQ, tokens, f.options).score;
+      if (s > 0) {
+        const weighted = Math.round(s * f.weight * 100) / 100;
+        if (weighted > singleFieldBest) singleFieldBest = weighted;
+      }
+    }
+
+    // Cross-field multi-token matching: e.g. "github pull" matching "github.com" in host + "Pull Requests" in title
+    let crossFieldScore = 0;
+    if (tokens.length > 1 && fields.length > 1) {
+      let totalWeighted = 0;
+      let allMatched = true;
+      for (let ti = 0; ti < tokens.length; ti++) {
+        const tok = tokens[ti];
+        let bestTokScore = 0;
+        for (let fi = 0; fi < fields.length; fi++) {
+          const f = fields[fi];
+          if (!f.prepared) f.prepared = prepareText(f.text);
+          const s = singleTokenMatch(f.prepared, tok, null, f.options).score;
+          if (s > 0) {
+            const w = s * f.weight;
+            if (w > bestTokScore) bestTokScore = w;
+          }
+        }
+        if (bestTokScore === 0) {
+          allMatched = false;
+          break;
+        }
+        totalWeighted += bestTokScore;
+      }
+      if (allMatched) {
+        crossFieldScore = Math.round((totalWeighted / tokens.length) * 0.94 * 100) / 100;
+      }
+    }
+
+    return Math.max(singleFieldBest, crossFieldScore);
   }
 
   function computeFrecencyBoost(frecencyMap, itemId, now = Date.now()) {
@@ -739,6 +1352,7 @@
           iconName: "volume",
           enterVerb: "Switch",
           priority: 14.5,
+          ignoreSubtitleSearch: true,
           searchText: "jump to playing audio tab sound",
           actionDescriptor: {
             type: "EXECUTE_ACTION",
@@ -799,6 +1413,7 @@
           iconName: "rotateCcw",
           enterVerb: "Reload",
           priority: 9.5,
+          ignoreSubtitleSearch: true,
           searchText: "reload refresh current tab page",
           actionDescriptor: {
             type: "EXECUTE_ACTION",
@@ -817,6 +1432,7 @@
           iconName: "rotateCcw",
           enterVerb: "Hard Reload",
           priority: 9.4,
+          ignoreSubtitleSearch: true,
           searchText: "hard reload refresh bypass cache force",
           actionDescriptor: {
             type: "EXECUTE_ACTION",
@@ -989,6 +1605,8 @@
           iconName: "pin",
           enterVerb: "Run",
           priority: 10,
+          ignoreSubtitleSearch: true,
+          searchText: "pin unpin current tab",
           actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "PIN_TAB", tabId: activeTab.id } }
         },
         {
@@ -1003,6 +1621,8 @@
           iconName: activeTab.muted ? "volume" : "mute",
           enterVerb: "Run",
           priority: 10,
+          ignoreSubtitleSearch: true,
+          searchText: "mute unmute current tab audio sound silence",
           actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "MUTE_TAB", tabId: activeTab.id } }
         },
         {
@@ -1017,6 +1637,8 @@
           iconName: "copy",
           enterVerb: "Run",
           priority: 10,
+          ignoreSubtitleSearch: true,
+          searchText: "duplicate clone copy current tab",
           actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "DUPLICATE_TAB", tabId: activeTab.id } }
         },
         {
@@ -1031,6 +1653,8 @@
           iconName: "link",
           enterVerb: "Copy",
           priority: 10,
+          ignoreSubtitleSearch: true,
+          searchText: "copy current page url link address clipboard",
           actionDescriptor: { type: "COPY_TEXT", text: activeTab.url || "" }
         }
       );
@@ -1050,6 +1674,7 @@
             iconName: "star",
             enterVerb: isBookmarked ? "Remove" : "Bookmark",
             priority: 9.8,
+            ignoreSubtitleSearch: true,
             searchText: isBookmarked
               ? "remove bookmark unbookmark current page"
               : "bookmark current page save star",
@@ -1070,6 +1695,7 @@
             iconName: "copy",
             enterVerb: "Copy",
             priority: 9.7,
+            ignoreSubtitleSearch: true,
             searchText: "copy current page as markdown link md",
             actionDescriptor: {
               type: "COPY_TEXT",
@@ -1089,6 +1715,7 @@
             iconName: "link",
             enterVerb: "Copy",
             priority: 9.6,
+            ignoreSubtitleSearch: true,
             searchText: "copy clean url strip tracking utm params",
             actionDescriptor: {
               type: "COPY_TEXT",
@@ -1108,6 +1735,7 @@
             iconName: "incognito",
             enterVerb: "Open",
             priority: 9.2,
+            ignoreSubtitleSearch: true,
             searchText: "open current page in incognito private window",
             actionDescriptor: {
               type: "EXECUTE_ACTION",
@@ -1727,6 +2355,7 @@
         iconName: "x",
         enterVerb: "Run",
         priority: 9,
+        searchText: "close other unpinned tabs cleanup",
         actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "CLOSE_OTHER_TABS" } }
       },
       {
@@ -1741,6 +2370,8 @@
         iconName: "window",
         enterVerb: "Run",
         priority: 9,
+        ignoreSubtitleSearch: true,
+        searchText: "move detach pop out current tab to new window",
         actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "MOVE_TAB_NEW_WINDOW" } }
       },
       {
@@ -1771,6 +2402,7 @@
         iconName: "incognito",
         enterVerb: "Run",
         priority: 8.5,
+        searchText: "new incognito private browsing window",
         actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "NEW_INCOGNITO" } }
       },
       {
@@ -1785,6 +2417,7 @@
         iconName: "zap",
         enterVerb: "Open",
         priority: 8.5,
+        searchText: "manage quick links bangs shortcuts settings options preferences",
         actionDescriptor: { type: "EXECUTE_ACTION", payload: { action: "OPEN_OPTIONS" } }
       },
       (() => {
@@ -1822,6 +2455,7 @@
         iconName: "bug",
         enterVerb: "Open",
         priority: 7.7,
+        ignoreSubtitleSearch: true,
         searchText: "report bug issue feedback feature request github help support cue",
         actionDescriptor: {
           type: "EXECUTE_ACTION",
@@ -1840,6 +2474,7 @@
         iconName: "github",
         enterVerb: "Open",
         priority: 7.6,
+        ignoreSubtitleSearch: true,
         searchText: "cue github repo repository source code share extension star link about",
         actionDescriptor: {
           type: "EXECUTE_ACTION",
@@ -1858,6 +2493,7 @@
         iconName: "coffee",
         enterVerb: "Open",
         priority: 7.5,
+        ignoreSubtitleSearch: true,
         searchText: "buy me a coffee support donate sponsor tip cue",
         actionDescriptor: {
           type: "EXECUTE_ACTION",
@@ -1876,41 +2512,58 @@
     const analysis = analyzeTabs(data.tabs || [], data.activeTab || null, { now, idleMinutes: data.idleTabMinutes });
     const items = [];
 
-    const tabs = (data.tabs || []).map((t, idx) => ({
-      id: `tab-${t.id}`,
-      kind: "tab",
-      section: "Open Tabs (Recent)",
-      tabId: t.id,
-      windowId: t.windowId,
-      groupId: t.groupId ?? -1,
-      title: t.title,
-      subtitle: t.url,
-      favIconUrl: t.favIconUrl,
-      audible: Boolean(t.audible),
-      muted: Boolean(t.muted),
-      discarded: Boolean(t.discarded),
-      pinned: Boolean(t.pinned),
-      currentWindow: t.currentWindow,
-      badge:
-        t.active && t.currentWindow
-          ? t.pinned
-            ? "Pinned · Current"
-            : "Current"
-          : t.pinned
-            ? "Pinned"
-            : t.currentWindow
-              ? "Tab"
-              : "Other Window",
-      badgeClass: "qc-badge-tab",
-      iconClass: "qc-icon-tab",
-      iconName: "globe",
-      enterVerb: "Switch",
-      priority: (t.currentWindow ? 24 : 14) + Math.max(0, 12 - idx) * 0.2,
-      actionDescriptor: {
-        type: "EXECUTE_ACTION",
-        payload: { action: "SWITCH_TAB", tabId: t.id, windowId: t.windowId }
-      }
-    }));
+    const groupById = new Map();
+    for (const g of data.tabGroups || []) {
+      if (g && g.id != null) groupById.set(g.id, g);
+    }
+
+    const tabs = (data.tabs || []).map((t, idx) => {
+      const grp = t.groupId != null && t.groupId !== -1 ? groupById.get(t.groupId) : null;
+      const statusParts = [];
+      if (grp?.title) statusParts.push(grp.title);
+      if (t.pinned) statusParts.push("pinned");
+      if (t.audible) statusParts.push("playing audio sound");
+      if (t.muted) statusParts.push("muted");
+      if (t.discarded) statusParts.push("sleeping suspended unloaded");
+      return {
+        id: `tab-${t.id}`,
+        kind: "tab",
+        section: "Open Tabs (Recent)",
+        tabId: t.id,
+        windowId: t.windowId,
+        groupId: t.groupId ?? -1,
+        active: Boolean(t.active),
+        title: t.title,
+        subtitle: t.url,
+        url: t.url || "",
+        favIconUrl: t.favIconUrl,
+        audible: Boolean(t.audible),
+        muted: Boolean(t.muted),
+        discarded: Boolean(t.discarded),
+        pinned: Boolean(t.pinned),
+        currentWindow: t.currentWindow,
+        badge:
+          t.active && t.currentWindow
+            ? t.pinned
+              ? "Pinned · Current"
+              : "Current"
+            : t.pinned
+              ? "Pinned"
+              : t.currentWindow
+                ? "Tab"
+                : "Other Window",
+        badgeClass: "qc-badge-tab",
+        iconClass: "qc-icon-tab",
+        iconName: "globe",
+        enterVerb: "Switch",
+        priority: (t.currentWindow ? 24 : 14) + Math.max(0, 12 - idx) * 0.2,
+        ...(statusParts.length ? { searchText: statusParts.join(" ") } : {}),
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "SWITCH_TAB", tabId: t.id, windowId: t.windowId }
+        }
+      };
+    });
 
     const tabGroups = [];
     for (const g of data.tabGroups || []) {
@@ -1935,6 +2588,7 @@
         enterVerb: "View Tabs",
         keepsOpen: true,
         priority: g.currentWindow ? 16 : 13,
+        searchText: `group ${g.title || ""} ${g.color || ""}`,
         actionDescriptor: {
           type: "DRILL_GROUP",
           group: { id: g.id, title: g.title, color: dotColor }
@@ -1949,6 +2603,7 @@
       section: "Recently Closed",
       title: c.title,
       subtitle: c.url,
+      url: c.url || "",
       favIconUrl: c.favIconUrl,
       badge: "Closed",
       badgeClass: "qc-badge-chrome",
@@ -1972,6 +2627,7 @@
         archiveId: a.id,
         title: a.title || a.url || "Archived Tab",
         subtitle: a.url || "",
+        url: a.url || "",
         favIconUrl: a.favIconUrl || "",
         archivedAt: a.archivedAt || 0,
         groupTitle: a.groupTitle || "",
@@ -1982,7 +2638,7 @@
         iconName: "archive",
         enterVerb: "Restore",
         priority: 12.5,
-        searchText: `archived archive ${a.title || ""} ${a.url || ""} ${a.groupTitle || ""}`,
+        searchText: `archived archive ${a.groupTitle || ""}`.trim(),
         actionDescriptor: {
           type: "EXECUTE_ACTION",
           payload: { action: "RESTORE_ARCHIVED_TAB", archiveId: a.id }
@@ -2006,6 +2662,7 @@
           section: "Quick Links",
           title: `Search ${ql.title} for "${restQuery}"`,
           subtitle: targetUrl,
+          url: targetUrl,
           badge: `!${ql.bang}`,
           badgeClass: "qc-badge-bang",
           iconClass: "qc-icon-bang",
@@ -2027,6 +2684,7 @@
         section: "Quick Links",
         title: ql.title,
         subtitle: ql.url || ql.subtitle || "",
+        url: ql.url || "",
         badge: ql.bang ? `!${ql.bang}` : "Link",
         badgeClass: "qc-badge-bang",
         iconClass: "qc-icon-bang",
@@ -2034,7 +2692,7 @@
         enterVerb: "Open",
         priority: exactBang ? 180 : 14,
         forceScore: exactBang ? 180 : 0,
-        searchText: `${ql.bang || ""} ${ql.title} ${ql.url || ""}`,
+        searchText: `${ql.bang || ""} ${ql.title}`.trim(),
         actionDescriptor: {
           type: "EXECUTE_ACTION",
           payload: { action: "OPEN_URL", url: ql.url }
@@ -2044,18 +2702,31 @@
 
     const actions = buildStaticActions(data.activeTab, analysis, data);
 
+    const CHROME_PAGE_SYNONYMS = {
+      "chrome-settings": "chrome settings preferences config options",
+      "chrome-extensions": "chrome extensions addons plugins manage",
+      "chrome-shortcuts": "chrome extension keyboard shortcuts hotkeys keybindings",
+      "chrome-downloads": "chrome downloads files",
+      "chrome-history": "chrome history recent pages",
+      "chrome-bookmarks": "chrome bookmark manager favorites",
+      "chrome-flags": "chrome flags experiments labs",
+      "chrome-passwords": "chrome password manager credentials logins autofill"
+    };
+
     const chromePages = (data.chromePages || []).map((p) => ({
       id: p.id,
       kind: "chrome",
       section: "Chrome Pages",
       title: p.title,
       subtitle: p.subtitle,
+      url: p.url || "",
       badge: "Chrome",
       badgeClass: "qc-badge-chrome",
       iconClass: "qc-icon-chrome",
       iconName: "settings",
       enterVerb: "Open",
       priority: 8,
+      ...(CHROME_PAGE_SYNONYMS[p.id] ? { searchText: CHROME_PAGE_SYNONYMS[p.id] } : {}),
       actionDescriptor: {
         type: "EXECUTE_ACTION",
         payload: { action: "OPEN_URL", url: p.url }
@@ -2068,13 +2739,14 @@
       section: "Bookmarks",
       title: b.title,
       subtitle: b.folder ? `${b.folder} — ${b.url}` : b.url,
+      url: b.url || "",
+      folder: b.folder || "",
       badge: "Bookmark",
       badgeClass: "qc-badge-bookmark",
       iconClass: "qc-icon-bookmark",
       iconName: "star",
       enterVerb: "Open",
       priority: 6,
-      searchText: `${b.title} ${b.url} ${b.folder || ""}`,
       actionDescriptor: {
         type: "EXECUTE_ACTION",
         payload: { action: "OPEN_URL", url: b.url }
@@ -2087,6 +2759,8 @@
       section: "History",
       title: h.title,
       subtitle: h.url,
+      url: h.url || "",
+      visitCount: h.visitCount || 0,
       badge: "History",
       badgeClass: "qc-badge-history",
       iconClass: "qc-icon-history",
@@ -2292,6 +2966,9 @@
       pool = [...quickLinks, ...tabs, ...tabGroups, ...closedTabs, ...archivedTabs, ...actions, ...chromePages, ...themes, ...extensions, ...downloads, ...bookmarks, ...history];
     }
 
+    const queryTokens = query ? normalizeQueryStr(query).split(/\s+/).filter(Boolean) : [];
+    const seenPrimaryUrls = new Set();
+
     for (const item of pool) {
       const boost = computeFrecencyBoost(frecency, item.frecencyId || item.id, now);
       if (!query) {
@@ -2302,21 +2979,37 @@
         items.push({ ...item, _score: item.forceScore + boost });
         continue;
       }
-      const titleScore = fuzzyMatch(item.title, query).score;
-      const subScore = Math.round(fuzzyMatch(item.subtitle || "", query).score * 0.85);
-      const extraScore = item.searchText ? Math.round(fuzzyMatch(item.searchText, query).score * 0.9) : 0;
-      const bestMatch = Math.max(titleScore, subScore, extraScore);
+      const bestMatch = scoreItem(item, query, queryTokens);
       if (bestMatch > 0) {
-        items.push({ ...item, _score: bestMatch + item.priority + boost });
+        if (mode === "all") {
+          const normUrl = item.url ? normalizeUrlForDedup(item.url) : "";
+          if (normUrl) {
+            if (item.kind === "history") {
+              if (seenPrimaryUrls.has(normUrl)) continue;
+              seenPrimaryUrls.add(normUrl);
+            } else if (item.kind === "tab" || item.kind === "closed" || item.kind === "bookmark") {
+              seenPrimaryUrls.add(normUrl);
+            }
+          }
+        }
+        const searchPriority = getSearchPriority(item, mode);
+        items.push({ ...item, _score: bestMatch + searchPriority + boost * 0.75 });
       }
     }
 
+    const limit = mode === "tabs" ? 200 : mode === "all" ? 40 : 60;
+    let sliced;
+
     if (query) {
-      items.sort((a, b) => b._score - a._score);
+      let urlFallback = null;
+      let googleFallback = null;
+
       if (mode === "all") {
         if (looksLikeUrl(query)) {
           const target = normalizeUrl(query);
-          items.push({
+          const normTarget = normalizeUrlForDedup(target);
+          const hasExactUrlMatch = items.some((it) => it.url && normalizeUrlForDedup(it.url) === normTarget);
+          urlFallback = {
             id: "fallback-url",
             kind: "fallback",
             title: `Open URL: ${target}`,
@@ -2326,14 +3019,15 @@
             iconClass: "",
             iconName: "globe",
             enterVerb: "Open",
-            _score: 0.5,
+            _score: hasExactUrlMatch ? 5 : 68,
             actionDescriptor: {
               type: "EXECUTE_ACTION",
               payload: { action: "OPEN_URL", url: target }
             }
-          });
+          };
+          items.push(urlFallback);
         }
-        items.push({
+        googleFallback = {
           id: "fallback-google",
           kind: "fallback",
           title: `Search Google for "${query}"`,
@@ -2348,14 +3042,23 @@
             type: "EXECUTE_ACTION",
             payload: { action: "OPEN_URL", url: `https://www.google.com/search?q=${encodeURIComponent(query)}` }
           }
-        });
+        };
       }
-    } else if (mode !== "all") {
+
       items.sort((a, b) => b._score - a._score);
+      if (googleFallback) {
+        sliced = items.slice(0, Math.max(0, limit - 1));
+        sliced.push(googleFallback);
+      } else {
+        sliced = items.slice(0, limit);
+      }
+    } else {
+      if (mode !== "all") {
+        items.sort((a, b) => b._score - a._score);
+      }
+      sliced = items.slice(0, limit);
     }
 
-    const limit = mode === "tabs" ? 200 : mode === "all" ? 40 : 60;
-    const sliced = items.slice(0, limit);
     return {
       prefixLabel: isPrefix ? prefixLabel : "",
       activeMode: mode,
@@ -2485,6 +3188,7 @@
     extractBaseDomain,
     parseModeAndQuery,
     fuzzyMatch,
+    scoreItem,
     getHighlightRanges,
     computeFrecencyBoost,
     analyzeTabs,

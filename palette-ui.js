@@ -282,6 +282,7 @@
       frecency: {},
       activeTab: null
     };
+    let baseHistory = [];
     let currentItems = [];
     let selectedIndex = 0;
     let isClosing = false;
@@ -1172,7 +1173,11 @@
     function getFilteredPopoverItems() {
       const q = popoverQuery.trim();
       if (!q) return popoverItems;
-      return popoverItems.filter((act) => Core.fuzzyMatch(act.title, q).score > 0);
+      return popoverItems
+        .map((act) => ({ act, score: Core.fuzzyMatch(act.title, q).score }))
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((entry) => entry.act);
     }
 
     function closePopover() {
@@ -1424,36 +1429,44 @@
         }
       };
 
-      const existingItems = [];
+      const scoredExisting = [];
       for (const g of data.tabGroups || []) {
-        if (cleanQuery && Core.fuzzyMatch(g.title, cleanQuery).score <= 0) continue;
+        const matchScore = cleanQuery ? Core.fuzzyMatch(g.title, cleanQuery).score : 1;
+        if (cleanQuery && matchScore <= 0) continue;
         const gHex = Core.GROUP_COLOR_HEX[g.color] || Core.GROUP_COLOR_HEX.grey;
-        existingItems.push({
-          id: `grp-picker-assign-${g.id}`,
-          kind: "group-assign",
-          section: "Assign to Existing Group",
-          title: g.title,
-          subtitle: `${g.tabCount} ${g.tabCount === 1 ? "tab" : "tabs"} · ${g.currentWindow ? "Current window" : "Other window"}`,
-          badge: "Assign",
-          badgeClass: "",
-          iconClass: "",
-          customColor: gHex,
-          groupColor: gHex,
-          iconName: "layers",
-          enterVerb: "Assign",
-          run: async () => {
-            const tabIds = groupPickerContext.tabIds;
-            await sendRuntimeMessage({
-              type: "EXECUTE_ACTION",
-              payload: {
-                action: "ASSIGN_TAB_TO_GROUP",
-                groupId: g.id,
-                tabIds
-              }
-            });
+        scoredExisting.push({
+          score: matchScore,
+          item: {
+            id: `grp-picker-assign-${g.id}`,
+            kind: "group-assign",
+            section: "Assign to Existing Group",
+            title: g.title,
+            subtitle: `${g.tabCount} ${g.tabCount === 1 ? "tab" : "tabs"} · ${g.currentWindow ? "Current window" : "Other window"}`,
+            badge: "Assign",
+            badgeClass: "",
+            iconClass: "",
+            customColor: gHex,
+            groupColor: gHex,
+            iconName: "layers",
+            enterVerb: "Assign",
+            run: async () => {
+              const tabIds = groupPickerContext.tabIds;
+              await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: {
+                  action: "ASSIGN_TAB_TO_GROUP",
+                  groupId: g.id,
+                  tabIds
+                }
+              });
+            }
           }
         });
       }
+      if (cleanQuery) {
+        scoredExisting.sort((a, b) => b.score - a.score);
+      }
+      const existingItems = scoredExisting.map((e) => e.item);
 
       if (cleanQuery && !existingItems.some((e) => e.title.toLowerCase() === cleanQuery.toLowerCase())) {
         return [createItem, ...existingItems];
@@ -1568,7 +1581,11 @@
         const currentWinId = movingTab ? movingTab.windowId : data.activeTab?.windowId;
         const targetWindows = (data.windows || []).filter((w) => w.id !== currentWinId);
         const filtered = cleanQuery
-          ? targetWindows.filter((w) => Core.fuzzyMatch(`${w.title} Window ${w.id}`, cleanQuery).score > 0)
+          ? targetWindows
+              .map((w) => ({ w, score: Core.fuzzyMatch(`${w.title} Window ${w.id}`, cleanQuery).score }))
+              .filter((e) => e.score > 0)
+              .sort((a, b) => b.score - a.score)
+              .map((e) => e.w)
           : targetWindows;
         currentItems = filtered.map((w) =>
           hydrateItem({
@@ -1601,7 +1618,14 @@
         splitPickerContext.tabIds = splitPickerContext.tabIds.filter((id) => activeIdSet.has(id));
         const selectedIds = splitPickerContext.tabIds;
         const filteredTabs = cleanQuery
-          ? allTabs.filter((t) => Core.fuzzyMatch(`${t.title} ${t.url}`, cleanQuery).score > 0)
+          ? allTabs
+              .map((t) => ({
+                t,
+                score: Core.scoreItem({ kind: "tab", title: t.title, subtitle: t.url, url: t.url }, cleanQuery)
+              }))
+              .filter((e) => e.score > 0)
+              .sort((a, b) => b.score - a.score)
+              .map((e) => e.t)
           : allTabs;
 
         currentItems = filteredTabs.map((t) => {
@@ -1676,7 +1700,14 @@
             })
           );
         currentItems = cleanQuery
-          ? groupTabs.filter((t) => Core.fuzzyMatch(`${t.title} ${t.subtitle}`, cleanQuery).score > 0)
+          ? groupTabs
+              .map((t) => ({
+                t,
+                score: Core.scoreItem({ kind: "tab", title: t.title, subtitle: t.subtitle, url: t.subtitle }, cleanQuery)
+              }))
+              .filter((e) => e.score > 0)
+              .sort((a, b) => b.score - a.score)
+              .map((e) => e.t)
           : groupTabs;
         prefixLabel = `Group: ${activeGroup.title}`;
       } else {
@@ -2000,10 +2031,26 @@
       if (selectedEl) selectedEl.scrollIntoView({ block: "nearest" });
     }
 
+    function mergeHistoryLists(primary = [], fallback = []) {
+      const merged = [];
+      const seen = new Set();
+      for (const list of [primary, fallback]) {
+        for (const h of list || []) {
+          if (!h) continue;
+          const key = h.url ? Core.normalizeUrlForDedup(h.url) : h.id;
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          merged.push(h);
+        }
+      }
+      return merged;
+    }
+
     async function refreshData(preserveId = null) {
       const res = await sendRuntimeMessage({ type: "GET_PALETTE_DATA", query: input.value });
       if (res.ok && res.data) {
         data = res.data;
+        baseHistory = Array.isArray(res.data.history) ? res.data.history : [];
         if (!isPopup) {
           backdrop.classList.toggle("qc-is-sidebar", Boolean(data.verticalSidebar));
         }
@@ -2026,12 +2073,18 @@
       const parsed = Core.parseModeAndQuery(input.value, chipMode);
       if (parsed.mode === "history" || (parsed.mode === "all" && parsed.query)) {
         historyTimer = setTimeout(async () => {
-          const currentId = currentItems[selectedIndex]?.id;
+          const currentSel = currentItems[selectedIndex];
+          const preserveId =
+            selectedIndex > 0 || (currentSel && currentSel.kind !== "fallback")
+              ? currentSel?.id || null
+              : null;
           const res = await sendRuntimeMessage({ type: "SEARCH_HISTORY", query: parsed.query });
           if (res?.ok && Array.isArray(res.history)) {
             if (Core.parseModeAndQuery(input.value, chipMode).query === parsed.query) {
-              data.history = res.history;
-              render(currentId);
+              data.history = parsed.query
+                ? mergeHistoryLists(res.history, baseHistory)
+                : res.history;
+              render(preserveId);
             }
           }
         }, 120);

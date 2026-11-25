@@ -233,21 +233,24 @@ test("parseModeAndQuery handles all chips and prefixes (with or without trailing
   });
 });
 
-test("fuzzyMatch hierarchy ranks exact > prefix > word-boundary > substring > multi-token > subsequence", () => {
+test("fuzzyMatch hierarchy ranks exact > prefix > word-boundary > substring > subsequence > typo > none", () => {
   const exact = Core.fuzzyMatch("GitHub", "github");
   const prefix = Core.fuzzyMatch("GitHub Actions", "github");
   const boundary = Core.fuzzyMatch("https://github.com/raymond/repo", "raymond");
   const substring = Core.fuzzyMatch("supergithubtool", "github");
   const multi = Core.fuzzyMatch("React JavaScript Documentation", "react doc");
   const subseq = Core.fuzzyMatch("Command Palette", "cmdplt");
+  const typo = Core.fuzzyMatch("GitHub", "gtihub");
   const none = Core.fuzzyMatch("GitHub", "xyz");
 
   assert.equal(exact.score, 120);
-  assert.equal(prefix.score, 95);
+  assert.ok(prefix.score >= 95 && prefix.score < exact.score, `Expected prefix (${prefix.score}) in [95, 120)`);
+  assert.ok(prefix.score > boundary.score, `Expected prefix (${prefix.score}) > boundary (${boundary.score})`);
   assert.ok(boundary.score > substring.score, `Expected boundary (${boundary.score}) > substring (${substring.score})`);
-  assert.ok(substring.score > 0);
-  assert.equal(multi.score, 65);
-  assert.ok(subseq.score > 0 && subseq.score <= 52);
+  assert.ok(substring.score > subseq.score, `Expected substring (${substring.score}) > subseq (${subseq.score})`);
+  assert.ok(multi.score > subseq.score, `Expected multi-token boundary (${multi.score}) > subseq (${subseq.score})`);
+  assert.ok(subseq.score > typo.score, `Expected subseq (${subseq.score}) > typo (${typo.score})`);
+  assert.ok(typo.score > 0, `Expected typo (${typo.score}) > 0`);
   assert.equal(none.score, 0);
 });
 
@@ -444,29 +447,30 @@ test("buildResults gates /e extensions behind optional management permission whe
 });
 
 test("fuzzyMatch handles multi-token queries with word-boundary, substring, and subsequence matching", () => {
-  // Multi-token substring / boundary match (score = 65)
-  const allSubstring = Core.fuzzyMatch("React JavaScript Documentation", "react doc");
-  assert.equal(allSubstring.score, 65);
-  assert.deepEqual(allSubstring.indices, [0, 1, 2, 3, 4, 17, 18, 19]);
+  // Multi-token word-boundary match outranks buried substring & subsequence
+  const allBoundary = Core.fuzzyMatch("React JavaScript Documentation", "react doc");
+  const contiguousPhrase = Core.fuzzyMatch("React Documentation", "react doc");
+  assert.ok(contiguousPhrase.score > allBoundary.score, `Expected contiguous (${contiguousPhrase.score}) > separated (${allBoundary.score})`);
+  assert.deepEqual(allBoundary.indices, [0, 1, 2, 3, 4, 17, 18, 19]);
 
-  // Multi-token subsequence match (e.g. "gh pr" against "GitHub Pull Requests")
+  // Multi-token acronym/subsequence match (e.g. "gh pr" against "GitHub Pull Requests")
   const ghPr = Core.fuzzyMatch("GitHub Pull Requests", "gh pr");
-  assert.ok(ghPr.score >= 53 && ghPr.score <= 64, `Expected score in [53, 64], got ${ghPr.score}`);
+  assert.ok(ghPr.score >= 44 && ghPr.score <= 72, `Expected score in [44, 72], got ${ghPr.score}`);
   assert.deepEqual(ghPr.indices, [0, 3, 7, 12]);
 
   // Multi-token subsequence match (e.g. "cmd plt" against "Command Palette")
   const cmdPlt = Core.fuzzyMatch("Command Palette", "cmd plt");
-  assert.ok(cmdPlt.score >= 53 && cmdPlt.score <= 64, `Expected score in [53, 64], got ${cmdPlt.score}`);
+  assert.ok(cmdPlt.score >= 44 && cmdPlt.score <= 72, `Expected score in [44, 72], got ${cmdPlt.score}`);
   assert.deepEqual(cmdPlt.indices, [0, 2, 6, 8, 10, 12]);
 
-  // Ranking hierarchy: all-substring multi-token (65) > multi-token subsequence (53..64) > single-pass subsequence (<= 52)
+  // Ranking hierarchy: all-boundary multi-token > multi-token acronym/subsequence > single-pass subsequence
   const singleSubseq = Core.fuzzyMatch("Command Palette", "cmdplt");
-  assert.ok(allSubstring.score > ghPr.score, `Expected allSubstring (${allSubstring.score}) > ghPr (${ghPr.score})`);
+  assert.ok(allBoundary.score > ghPr.score, `Expected allBoundary (${allBoundary.score}) > ghPr (${ghPr.score})`);
   assert.ok(ghPr.score > singleSubseq.score, `Expected ghPr (${ghPr.score}) > singleSubseq (${singleSubseq.score})`);
 
   // Repeated tokens in query match distinct occurrences cleanly
   const repeated = Core.fuzzyMatch("Quick Quick Settings", "quick quick");
-  assert.equal(repeated.score, 65);
+  assert.ok(repeated.score >= 95);
   assert.deepEqual(repeated.indices, [0, 1, 2, 3, 4, 6, 7, 8, 9, 10]);
 
   // Multi-token query where one token fails to match returns score 0
@@ -1246,4 +1250,117 @@ test("parseModeAndQuery and buildResults support /a archived tabs, Arc-style unl
     type: "EXECUTE_ACTION",
     payload: { action: "OPEN_URL", url: Core.SUPPORT_URL }
   });
+});
+
+test("improved search: optimal subsequence DP, camelCase, anti-noise rejection, diacritics, and typo tolerance", () => {
+  // Optimal DP prefers word boundaries over earlier mid-word occurrences
+  const prMatch = Core.fuzzyMatch("Open Pull Requests", "pr");
+  assert.deepEqual(prMatch.indices, [5, 10], "should match Pull Requests initials, not 'p' in Open");
+
+  // camelCase word boundaries boost acronyms
+  const ghMatch = Core.fuzzyMatch("GitHub", "gh");
+  const jsMatch = Core.fuzzyMatch("JavaScript", "js");
+  assert.ok(ghMatch.score >= 45);
+  assert.deepEqual(ghMatch.indices, [0, 3]);
+  assert.ok(jsMatch.score >= 45);
+  assert.deepEqual(jsMatch.indices, [0, 4]);
+
+  // Anti-noise rejects scattered random letters in long URLs
+  assert.equal(Core.fuzzyMatch("https://twitter.com/home", "pr").score, 0);
+  assert.equal(Core.fuzzyMatch("https://mail.google.com/mail/u/0/#inbox/ticket", "git").score, 0);
+  assert.equal(Core.fuzzyMatch("https://news.ycombinator.com/item?id=12345", "set").score, 0);
+
+  // Diacritic folding and punctuation-insensitive queries
+  const cafe = Core.fuzzyMatch("Café Menu", "cafe");
+  assert.ok(cafe.score >= 95);
+  assert.deepEqual(cafe.indices, [0, 1, 2, 3]);
+  const hyphenated = Core.fuzzyMatch("Fold All Tab Groups", "tab-group");
+  assert.ok(hyphenated.score >= 70);
+
+  // Typo tolerance handles transpositions & 1-char typos while avoiding noisy short false positives
+  assert.ok(Core.fuzzyMatch("GitHub", "gtihub").score > 0);
+  assert.ok(Core.fuzzyMatch("Reload Current Tab", "reolad").score > 0);
+  assert.ok(Core.fuzzyMatch("Archive Current Tab", "acrhive").score > 0);
+  assert.ok(Core.fuzzyMatch("Chrome Settings", "settigns").score > 0);
+  assert.equal(Core.fuzzyMatch("Tailscale", "mail").score, 0, "short typo guard prevents mail -> tail");
+});
+
+test("improved search: cross-field matching, clean URL scoring, no action subtitle pollution, dedup, and fallbacks", () => {
+  const data = {
+    activeTab: { id: 1, windowId: 10, groupId: 5, title: "GitHub Dashboard", url: "https://github.com/dashboard", active: true, currentWindow: true },
+    tabGroups: [{ id: 5, title: "Sprint", color: "purple", currentWindow: true, tabCount: 2 }],
+    tabs: [
+      { id: 2, windowId: 10, groupId: 5, title: "Bug: search sucks", url: "https://github.com/org/repo/issues/42", active: false, currentWindow: true },
+      { id: 3, windowId: 10, groupId: -1, title: "Twitter Home", url: "https://twitter.com/home", active: false, currentWindow: true },
+      { id: 1, windowId: 10, groupId: 5, title: "GitHub Dashboard", url: "https://github.com/dashboard", active: true, currentWindow: true }
+    ],
+    bookmarks: [
+      { id: "b1", title: "HTML Reference", url: "https://developer.mozilla.org/en-US/docs/Web/HTML", folder: "Frontend / Docs" },
+      { id: "b2", title: "Flexbox Guide", url: "https://css-tricks.com/snippets/css/a-guide-to-flexbox/", folder: "Frontend / CSS" }
+    ],
+    history: [
+      { id: "h1", title: "Bug: search sucks", url: "https://github.com/org/repo/issues/42", visitCount: 3 },
+      { id: "h2", title: "Old Blog Post", url: "https://blog.example.com/search-ranking", visitCount: 2 }
+    ]
+  };
+
+  // 1. Cross-field multi-token matching: domain in URL + word in title
+  const crossTab = Core.buildResults(data, "github search", "all");
+  assert.equal(crossTab.items[0].id, "tab-2", "cross-field query should surface matching tab first");
+
+  // 2. Cross-field tab group + domain matching
+  const groupCross = Core.buildResults(data, "sprint github", "all");
+  assert.ok(groupCross.items.some((i) => i.id === "tab-2"));
+
+  // 3. Cross-field bookmark folder + title matching
+  const bmCross = Core.buildResults(data, "frontend flexbox", "all");
+  assert.equal(bmCross.items[0].id, "b2");
+
+  // 4. Clean URL scoring: "ht" should match HTML Reference, NOT Twitter via "https://"
+  const htRes = Core.buildResults(data, "ht", "all");
+  assert.equal(htRes.items[0].id, "b1", "HTML Reference should rank #1 for 'ht'");
+  assert.equal(htRes.items.some((i) => i.id === "tab-3"), false, "https://twitter.com should not match 'ht'");
+
+  // 5. No action subtitle pollution when active tab is on GitHub
+  const ghRes = Core.buildResults(data, "github", "all");
+  const actionIds = ghRes.items.filter((i) => i.kind === "action").map((i) => i.id);
+  for (const pollutedId of ["act-reload", "act-hard-reload", "act-pin", "act-mute", "act-dup", "act-copy-url", "act-copy-markdown", "act-copy-clean-url", "act-open-incognito", "act-move-win"]) {
+    assert.equal(actionIds.includes(pollutedId), false, `${pollutedId} must not pollute 'github' search via activeTab subtitle`);
+  }
+
+  // 6. Active tab ranks below non-active tab with equivalent host match
+  const nonActiveIdx = ghRes.items.findIndex((i) => i.id === "tab-2");
+  const activeIdx = ghRes.items.findIndex((i) => i.id === "tab-1");
+  assert.ok(nonActiveIdx !== -1 && activeIdx !== -1);
+
+  // 7. Cross-source history dedup in All mode, preserved in /h History mode
+  assert.equal(crossTab.items.some((i) => i.id === "h1"), false, "duplicate history entry of open tab should be deduped in All mode");
+  const histOnly = Core.buildResults(data, "/h search", "all");
+  assert.ok(histOnly.items.some((i) => i.id === "h1"), "history entry should remain visible in /h mode");
+
+  // 8. Fallback URL elevates when typing a new URL, and fallback-google is never sliced off with >40 matches
+  const urlRes = Core.buildResults(data, "stripe.com/docs", "all");
+  assert.equal(urlRes.items[0].id, "fallback-url");
+  assert.equal(urlRes.items[urlRes.items.length - 1].id, "fallback-google");
+
+  const manyTabs = Array.from({ length: 50 }, (_, i) => ({
+    id: i + 1,
+    title: `Docs Page ${i + 1}`,
+    url: `https://docs.example.com/page-${i + 1}`,
+    currentWindow: true
+  }));
+  const manyRes = Core.buildResults({ tabs: manyTabs }, "docs", "all");
+  assert.equal(manyRes.items.length, 40);
+  assert.equal(manyRes.items[manyRes.items.length - 1].id, "fallback-google");
+});
+
+test("getHighlightRanges supports cross-field partial highlights and ignores https:// scheme noise", () => {
+  const titleHl = Core.getHighlightRanges("Bug: search sucks", "github search");
+  assert.ok(titleHl.some((s) => s.matched && s.text.toLowerCase() === "search"));
+
+  const urlHl = Core.getHighlightRanges("https://github.com/org/repo/issues/42", "github search");
+  assert.ok(urlHl.some((s) => s.matched && s.text.toLowerCase() === "github"));
+
+  const noSchemeNoise = Core.getHighlightRanges("https://twitter.com", "ht");
+  assert.deepEqual(noSchemeNoise, [{ text: "https://twitter.com", matched: false }]);
 });

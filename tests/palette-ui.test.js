@@ -261,6 +261,9 @@ function mountPalette(overrides = {}) {
     runtime: {
       sendMessage: (msg, cb) => {
         sentMessages.push(msg);
+        if (overrides.onMessage && overrides.onMessage(msg, cb)) {
+          return;
+        }
         if (msg.type === "GET_PALETTE_DATA") {
           cb({ ok: true, data: sampleData });
           return;
@@ -828,5 +831,64 @@ test("palette-ui supports inline unload/archive tab buttons, /a archived tab pop
         m.payload.url === "https://github.com/rayjosong/cue-chrome-palette/issues"
     )
   );
+});
+
+test("palette-ui merges SEARCH_HISTORY with recent history and selects newly arrived matches over fallback-google", async () => {
+  let historyCalls = 0;
+  const ui = mountPalette({
+    data: {
+      activeTab: { id: 1, windowId: 100, groupId: -1, title: "Home", url: "https://example.com", active: true, currentWindow: true },
+      tabs: [{ id: 1, windowId: 100, groupId: -1, title: "Home", url: "https://example.com", active: true, currentWindow: true }],
+      tabGroups: [],
+      closedTabs: [],
+      quickLinks: [],
+      chromePages: [],
+      bookmarks: [],
+      history: [{ id: "h-recent", title: "GitHub Pull Requests", url: "https://github.com/org/repo/pulls", visitCount: 5 }],
+      frecency: {},
+      themes: [],
+      themesPermission: false,
+      extensions: [],
+      downloads: [],
+      windows: [{ id: 100, focused: true, incognito: false, tabCount: 1, title: "Home" }]
+    },
+    onMessage(msg, cb) {
+      if (msg.type === "SEARCH_HISTORY") {
+        historyCalls++;
+        if (msg.query === "gh pr") {
+          cb({ ok: true, history: [] });
+          return true;
+        }
+        if (msg.query === "deephistory") {
+          cb({
+            ok: true,
+            history: [{ id: "h-deep", title: "DeepHistory Reference", url: "https://deephistory.dev", visitCount: 3 }]
+          });
+          return true;
+        }
+      }
+      return false;
+    }
+  });
+  await flush();
+
+  // Fuzzy query "gh pr" matches recent history even when chrome.history.search returns []
+  const input = ui.getInput();
+  input.value = "gh pr";
+  input.dispatchEvent({ type: "input" });
+  await new Promise((r) => setTimeout(r, 150));
+
+  let rows = ui.getRows();
+  assert.ok(rows.some((r) => r.textContent.includes("GitHub Pull Requests")), "recent history should stay available when SEARCH_HISTORY returns []");
+
+  // Query with no immediate match (only fallback-google) should select newly arrived history match
+  input.value = "deephistory";
+  input.dispatchEvent({ type: "input" });
+  await new Promise((r) => setTimeout(r, 150));
+
+  rows = ui.getRows();
+  assert.ok(rows[0].textContent.includes("DeepHistory Reference"), "deep history result should appear first");
+  assert.equal(rows[0].getAttribute("aria-selected"), "true", "newly arrived top history result should be selected instead of fallback-google");
+  assert.ok(historyCalls >= 2);
 });
 

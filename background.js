@@ -1,7 +1,7 @@
 if (typeof importScripts === "function" && typeof globalThis.__CueCore === "undefined") {
   importScripts("palette-core.js");
 }
-const { normalizeUrlForDedup, extractBaseDomain, extractHostname } = globalThis.__CueCore;
+const { normalizeUrlForDedup, extractBaseDomain, extractHostname, parseModeAndQuery } = globalThis.__CueCore;
 
 const DEFAULT_QUICK_LINKS = [
   { bang: "gh", title: "GitHub", url: "https://github.com", searchUrl: "https://github.com/search?q={query}" },
@@ -455,10 +455,11 @@ async function getManagementData() {
 
 async function searchHistory(query = "") {
   try {
+    const cleanText = parseModeAndQuery(query).query;
     const items = await chrome.history.search({
-      text: query.trim(),
-      maxResults: 30,
-      startTime: Date.now() - 1000 * 60 * 60 * 24 * 30
+      text: cleanText,
+      maxResults: 100,
+      startTime: Date.now() - 1000 * 60 * 60 * 24 * 90
     });
     return items
       .filter((h) => h.url)
@@ -466,7 +467,8 @@ async function searchHistory(query = "") {
         id: `hist-${h.id}`,
         title: h.title || h.url,
         url: h.url,
-        visitCount: h.visitCount || 0
+        visitCount: h.visitCount || 0,
+        lastVisitTime: h.lastVisitTime || 0
       }));
   } catch {
     return [];
