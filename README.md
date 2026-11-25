@@ -1,5 +1,11 @@
 # Cue — Chrome Command Palette
 
+[![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue?style=flat-square)](manifest.json)
+[![Version](https://img.shields.io/badge/version-1.1.0-informational?style=flat-square)](manifest.json)
+[![GitHub Stars](https://img.shields.io/github/stars/rayjosong/cue-chrome-palette?style=flat-square&logo=github&label=Stars)](https://github.com/rayjosong/cue-chrome-palette)
+[![Open Issues](https://img.shields.io/github/issues/rayjosong/cue-chrome-palette?style=flat-square&logo=github&color=0969da)](https://github.com/rayjosong/cue-chrome-palette/issues)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/crimpkey)
+
 A fast, no-frills Manifest V3 command palette for Google Chrome (`⌘⇧K` / `Ctrl+Shift+K`) — no account, no integrations, tabs, bookmarks, and history never leave Chrome. Built for company computers as much as personal ones. Featuring Dark Indigo Glass & Adaptive Light UI, MRU tab switching, interactive tab groups, custom bangs, and optional Chrome theme switching.
 
 ---
