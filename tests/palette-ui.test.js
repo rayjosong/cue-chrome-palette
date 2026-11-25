@@ -750,3 +750,83 @@ test("palette-ui applies qc-is-sidebar class from data and toggles it live witho
   assert.equal(ui.getClosedCount(), 0);
 });
 
+test("palette-ui supports inline unload/archive tab buttons, /a archived tab popover, and footer GitHub/Issues quick links", async () => {
+  const ui = mountPalette({
+    data: {
+      activeTab: { id: 1, windowId: 100, groupId: 10, title: "Active Tab", url: "https://github.com/org/repo", pinned: false, audible: false, muted: false },
+      tabs: [
+        { id: 2, windowId: 100, groupId: 10, title: "MDN Docs", url: "https://developer.mozilla.org/", active: false, currentWindow: true, pinned: false, discarded: false, lastAccessed: 2000 },
+        { id: 1, windowId: 100, groupId: 10, title: "Active Tab", url: "https://github.com/org/repo", active: true, currentWindow: true, pinned: false, discarded: false, lastAccessed: 1000 }
+      ],
+      tabGroups: [
+        { id: 10, title: "Work", color: "blue", collapsed: false, windowId: 100, currentWindow: true, tabCount: 2 }
+      ],
+      closedTabs: [],
+      archivedTabs: [
+        { id: "arch-42", title: "Saved Spec", url: "https://spec.example.com", archivedAt: Date.now() - 60000 }
+      ],
+      quickLinks: [],
+      chromePages: [],
+      bookmarks: [],
+      history: [],
+      frecency: {},
+      themes: [],
+      themesPermission: false,
+      extensions: [],
+      downloads: [],
+      windows: [{ id: 100, focused: true, incognito: false, tabCount: 2, title: "Active Tab" }]
+    }
+  });
+  await flush();
+
+  // First row is tab 2 -> has inline unload & archive buttons
+  const firstRow = ui.getRows()[0];
+  const unloadBtn = firstRow.querySelectorAll(".qc-tab-btn").find((b) => b.getAttribute("aria-label") === "Unload tab");
+  const archiveBtn = firstRow.querySelectorAll(".qc-tab-btn").find((b) => b.getAttribute("aria-label") === "Archive tab");
+  assert.ok(unloadBtn, "background tab row should have inline Unload button");
+  assert.ok(archiveBtn, "http tab row should have inline Archive button");
+
+  unloadBtn.click();
+  await flush();
+  assert.ok(
+    ui.sentMessages.some((m) => m.type === "EXECUTE_ACTION" && m.payload.action === "DISCARD_TAB" && m.payload.tabId === 2)
+  );
+
+  archiveBtn.click();
+  await flush();
+  assert.ok(
+    ui.sentMessages.some((m) => m.type === "EXECUTE_ACTION" && m.payload.action === "ARCHIVE_TAB" && m.payload.tabId === 2)
+  );
+
+  // Switch to /a archived tabs mode and inspect popover
+  const input = ui.getInput();
+  input.value = "/a";
+  input.dispatchEvent({ type: "input" });
+  await flush();
+
+  const archivedRows = ui.getRows();
+  assert.equal(archivedRows.length, 1);
+  assert.match(archivedRows[0].textContent, /Saved Spec/);
+
+  ui.getModal().dispatchEvent({ type: "keydown", key: "k", metaKey: true });
+  const popItems = ui.container.querySelector(".qc-popover-list").querySelectorAll(".qc-item");
+  assert.ok(popItems.some((el) => el.textContent.includes("Restore Tab (Unarchive)")));
+  assert.ok(popItems.some((el) => el.textContent.includes("Open Copy (Keep in Archive)")));
+  assert.ok(popItems.some((el) => el.textContent.includes("Remove from Archive")));
+  ui.getModal().dispatchEvent({ type: "keydown", key: "Escape" });
+
+  // Footer GitHub & Issues quick-link buttons
+  const footerBtns = ui.container.querySelectorAll(".qc-footer-icon-btn");
+  assert.equal(footerBtns.length, 2, "footer should include GitHub repo and Issues quick-link buttons");
+  footerBtns[1].click();
+  await flush();
+  assert.ok(
+    ui.sentMessages.some(
+      (m) =>
+        m.type === "EXECUTE_ACTION" &&
+        m.payload.action === "OPEN_URL" &&
+        m.payload.url === "https://github.com/rayjosong/cue-chrome-palette/issues"
+    )
+  );
+});
+

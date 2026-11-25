@@ -4,6 +4,7 @@ const addBtn = document.getElementById("add-btn");
 const resetBtn = document.getElementById("reset-btn");
 const saveBtn = document.getElementById("save-btn");
 const idleSelect = document.getElementById("idle-minutes");
+const idleAutoActionSelect = document.getElementById("idle-auto-action");
 
 let links = [];
 
@@ -56,7 +57,7 @@ function render() {
 }
 
 async function load() {
-  const { quickLinks, idleTabMinutes } = await chrome.storage.sync.get(["quickLinks", "idleTabMinutes"]);
+  const { quickLinks, idleTabMinutes, idleTabAutoAction } = await chrome.storage.sync.get(["quickLinks", "idleTabMinutes", "idleTabAutoAction"]);
   if (Array.isArray(quickLinks)) {
     links = quickLinks;
   } else {
@@ -66,6 +67,10 @@ async function load() {
   if (idleSelect) {
     const parsed = Number(idleTabMinutes);
     idleSelect.value = Number.isFinite(parsed) && parsed > 0 ? String(Math.floor(parsed)) : "60";
+  }
+  if (idleAutoActionSelect) {
+    idleAutoActionSelect.value =
+      idleTabAutoAction === "unload" || idleTabAutoAction === "archive" ? idleTabAutoAction : "off";
   }
   render();
 }
@@ -122,7 +127,9 @@ saveBtn.addEventListener("click", async () => {
   }
 
   const idleMinutes = idleSelect ? Math.max(1, Math.floor(Number(idleSelect.value) || 60)) : 60;
-  await chrome.storage.sync.set({ quickLinks: normalized, idleTabMinutes: idleMinutes });
+  const rawAuto = idleAutoActionSelect?.value;
+  const idleTabAutoAction = rawAuto === "unload" || rawAuto === "archive" ? rawAuto : "off";
+  await chrome.storage.sync.set({ quickLinks: normalized, idleTabMinutes: idleMinutes, idleTabAutoAction });
   links = normalized;
   render();
   statusEl.style.color = "";

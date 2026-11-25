@@ -80,7 +80,10 @@ function createChromeHarness(overrides = {}) {
       { id: 200, focused: false, incognito: false, tabs: [{ id: 4, active: true, title: "Other Window" }] }
     ],
     quickLinks: overrides.quickLinks ?? null,
+    idleTabMinutes: overrides.idleTabMinutes ?? undefined,
+    idleTabAutoAction: overrides.idleTabAutoAction ?? undefined,
     frecency: overrides.frecency ?? {},
+    archivedTabs: overrides.archivedTabs ?? [],
     sessionStorage: overrides.sessionStorage ?? {}
   };
 
@@ -122,17 +125,25 @@ function createChromeHarness(overrides = {}) {
         }
       },
       sync: {
-        get: async () => ({ quickLinks: state.quickLinks, verticalSidebar: state.verticalSidebar }),
+        get: async () => ({
+          quickLinks: state.quickLinks,
+          verticalSidebar: state.verticalSidebar,
+          idleTabMinutes: state.idleTabMinutes,
+          idleTabAutoAction: state.idleTabAutoAction
+        }),
         set: async (obj) => {
           if ("quickLinks" in obj) state.quickLinks = obj.quickLinks;
           if ("verticalSidebar" in obj) state.verticalSidebar = obj.verticalSidebar;
+          if ("idleTabMinutes" in obj) state.idleTabMinutes = obj.idleTabMinutes;
+          if ("idleTabAutoAction" in obj) state.idleTabAutoAction = obj.idleTabAutoAction;
         }
       },
       local: {
-        get: async () => ({ cueFrecency: state.frecency }),
+        get: async () => ({ cueFrecency: state.frecency, cueArchivedTabs: state.archivedTabs }),
         set: async (obj) => {
           calls.storageLocalSet.push(obj);
           if (obj.cueFrecency) state.frecency = obj.cueFrecency;
+          if (obj.cueArchivedTabs) state.archivedTabs = obj.cueArchivedTabs;
         },
         remove: async () => {}
       }
@@ -775,4 +786,144 @@ test("GET_PALETTE_DATA includes verticalSidebar and TOGGLE_VERTICAL_SIDEBAR togg
   assert.equal(toggleOff.ok, true);
   assert.equal(toggleOff.verticalSidebar, false);
   assert.equal(toggleOff.toast, "Switched to centered palette");
+});
+
+test("EXECUTE_ACTION DISCARD_TAB unloads active tab by switching away first and DISCARD_GROUP_TABS unloads group tabs", async () => {
+  const { sendMessage, calls } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, groupId: 10, active: true, pinned: false, audible: false, discarded: false, title: "Active", url: "https://a.com" },
+      { id: 2, windowId: 100, groupId: 10, active: false, pinned: false, audible: false, discarded: false, title: "Bg Group", url: "https://b.com" },
+      { id: 3, windowId: 100, groupId: 10, active: false, pinned: false, audible: true, discarded: false, title: "Audible Group", url: "https://c.com" }
+    ]
+  });
+
+  const grpRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "DISCARD_GROUP_TABS", groupId: 10 }
+  });
+  assert.equal(grpRes.ok, true);
+  assert.equal(grpRes.discardedCount, 1);
+  assert.deepEqual(plain(calls.tabsDiscard), [2]);
+
+  calls.tabsDiscard.length = 0;
+  const activeRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "DISCARD_TAB", tabId: 1 }
+  });
+  assert.equal(activeRes.ok, true);
+  assert.equal(calls.tabsUpdate[0].tabId, 3);
+  assert.deepEqual(plain(calls.tabsUpdate[0].props), { active: true });
+  assert.deepEqual(plain(calls.tabsDiscard), [1]);
+
+  // Solo tab cannot be unloaded
+  const solo = createChromeHarness({
+    tabs: [{ id: 9, windowId: 100, active: true, title: "Solo", url: "https://solo.com" }]
+  });
+  const soloRes = await solo.sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "DISCARD_TAB", tabId: 9 }
+  });
+  assert.equal(soloRes.ok, false);
+  assert.match(soloRes.error, /only open tab/i);
+});
+
+test("Arc-style tab archiving persists archived tabs, skips closedTabs pollution, and supports restore/delete/clear", async () => {
+  const now = Date.now();
+  const { sendMessage, listeners, calls, state } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, groupId: 10, active: true, pinned: false, audible: false, lastAccessed: now - 1000, title: "Active", url: "https://a.com" },
+      { id: 2, windowId: 100, groupId: 10, active: false, pinned: false, audible: false, lastAccessed: now - 90 * 60 * 1000, title: "Idle Grouped", url: "https://docs.example.com" },
+      { id: 3, windowId: 100, groupId: -1, active: false, pinned: true, audible: false, lastAccessed: now - 90 * 60 * 1000, title: "Pinned", url: "https://pin.example.com" },
+      { id: 4, windowId: 100, groupId: -1, active: false, pinned: false, audible: false, lastAccessed: now - 5 * 60 * 1000, title: "Recent Bg", url: "https://recent.example.com" }
+    ],
+    tabGroups: [{ id: 10, title: "Research", color: "purple", collapsed: false, windowId: 100 }]
+  });
+
+  // Seed snapshots
+  await sendMessage({ type: "GET_PALETTE_DATA", query: "" });
+
+  // Archive idle tabs (only tab 2 qualifies)
+  const idleRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "ARCHIVE_IDLE_TABS", idleMinutes: 60 }
+  });
+  assert.equal(idleRes.ok, true);
+  assert.equal(idleRes.archivedCount, 1);
+  assert.deepEqual(plain(calls.tabsRemove[0]), [2]);
+
+  // Simulate Chrome firing tabs.onRemoved for the archived tab -> should NOT add to closedTabs
+  await listeners.onRemoved[0](2);
+
+  const afterArchive = await sendMessage({ type: "GET_PALETTE_DATA", query: "" });
+  assert.equal(afterArchive.data.archivedTabs.length, 1);
+  assert.equal(afterArchive.data.archivedTabs[0].url, "https://docs.example.com");
+  assert.equal(afterArchive.data.archivedTabs[0].groupTitle, "Research");
+  assert.equal(afterArchive.data.archivedTabs[0].groupColor, "purple");
+  assert.equal(afterArchive.data.closedTabs.length, 0);
+
+  // Restore keeping in archive
+  const archiveId = afterArchive.data.archivedTabs[0].id;
+  const keepRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "RESTORE_ARCHIVED_TAB", archiveId, keepInArchive: true }
+  });
+  assert.equal(keepRes.ok, true);
+  assert.deepEqual(plain(calls.tabsCreate[0]), { url: "https://docs.example.com", active: true });
+  assert.equal(state.archivedTabs.length, 1);
+
+  // Restore removing from archive
+  const restoreRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "RESTORE_ARCHIVED_TAB", archiveId }
+  });
+  assert.equal(restoreRes.ok, true);
+  assert.equal(state.archivedTabs.length, 0);
+
+  // Archive single tab + delete + clear
+  await sendMessage({ type: "EXECUTE_ACTION", payload: { action: "ARCHIVE_TAB", tabId: 4 } });
+  await sendMessage({ type: "EXECUTE_ACTION", payload: { action: "ARCHIVE_GROUP_TABS", groupId: 10 } });
+  const dataNow = await sendMessage({ type: "GET_PALETTE_DATA", query: "" });
+  assert.ok(dataNow.data.archivedTabs.length >= 2);
+
+  const delRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "DELETE_ARCHIVED_TAB", archiveId: dataNow.data.archivedTabs[0].id }
+  });
+  assert.equal(delRes.ok, true);
+
+  const clearRes = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "CLEAR_ARCHIVED_TABS" }
+  });
+  assert.equal(clearRes.ok, true);
+  assert.equal(state.archivedTabs.length, 0);
+});
+
+test("idleTabAutoAction automatically unloads or archives idle tabs on tab activation when enabled", async () => {
+  const now = Date.now();
+  const unloadHarness = createChromeHarness({
+    idleTabMinutes: 30,
+    idleTabAutoAction: "unload",
+    tabs: [
+      { id: 1, windowId: 100, active: true, pinned: false, audible: false, discarded: false, lastAccessed: now, title: "Active", url: "https://a.com" },
+      { id: 2, windowId: 100, active: false, pinned: false, audible: false, discarded: false, lastAccessed: now - 45 * 60 * 1000, title: "Stale", url: "https://stale.com" }
+    ]
+  });
+  unloadHarness.listeners.onActivated[0]({ tabId: 1 });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(plain(unloadHarness.calls.tabsDiscard), [2]);
+
+  const archiveHarness = createChromeHarness({
+    idleTabMinutes: 30,
+    idleTabAutoAction: "archive",
+    tabs: [
+      { id: 1, windowId: 100, active: true, pinned: false, audible: false, discarded: false, lastAccessed: now, title: "Active", url: "https://a.com" },
+      { id: 2, windowId: 100, active: false, pinned: false, audible: false, discarded: false, lastAccessed: now - 45 * 60 * 1000, title: "Stale", url: "https://stale.com" }
+    ]
+  });
+  archiveHarness.listeners.onActivated[0]({ tabId: 1 });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(plain(archiveHarness.calls.tabsRemove[0]), [2]);
+  assert.equal(archiveHarness.state.archivedTabs.length, 1);
+  assert.equal(archiveHarness.state.archivedTabs[0].url, "https://stale.com");
 });

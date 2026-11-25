@@ -67,6 +67,7 @@ See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday power wor
 | `/h` | History (30 days) |
 | `/g` | Tab groups |
 | `/c` | Recently closed |
+| `/a` | Archived tabs (persistent, like Arc) |
 | `/t` | Chrome themes (optional — needs the `management` permission, granted in Options) |
 
 ---
@@ -86,6 +87,13 @@ See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday power wor
 3. Enable **Developer mode**.
 4. Click **Load unpacked** and select the unzipped folder.
 5. Press **`⌘ + Shift + K`** (or **`Ctrl + Shift + K`**) on any page, or click the toolbar icon on `chrome://` pages.
+
+## Feedback, Issues & Support
+
+- **Share / Star:** [github.com/rayjosong/cue-chrome-palette](https://github.com/rayjosong/cue-chrome-palette)
+- **Report a bug or request a feature:** [Open an issue on GitHub](https://github.com/rayjosong/cue-chrome-palette/issues)
+- **Support Cue:** [Buy Me a Coffee](https://buymeacoffee.com/xqpfm09t8t)
+- You can also jump straight to the GitHub repo, Issues page, or Buy Me a Coffee from inside Cue via the footer icons, **Options → About, Feedback & Share**, or `> report issue` / `> github` / `> coffee`.
 
 ## Tests
 

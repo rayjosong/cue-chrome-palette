@@ -72,19 +72,21 @@ Export an entire research session, PR review set, or tab group straight to your 
 
 ---
 
-## 5. Suspend Idle or Background Tabs (Memory Saver)
+## 5. Unload / Suspend & Archive Tabs (Arc-Style Memory Saver)
 
-Reclaim RAM from inactive tabs without closing them or breaking your tab group layout.
+Reclaim RAM from inactive tabs — either by putting them to sleep in place or archiving them out of the tab bar into a persistent, searchable archive (`/a`), just like Arc.
 
 - **How to trigger it:**
-  - **Idle tabs:** Open the palette and run **Suspend Idle Tabs** (`> suspend idle` — surfaces near the top with an idle count badge when inactive tabs exist).
-  - **All background tabs:** Run **Suspend Other Background Tabs** (`> suspend other`) to sleep every non-active, silent background tab in the current window.
-  - **Single background tab:** Highlight any non-active tab in the palette, press `⌘K` / `Ctrl+K`, and choose **Suspend Tab (Save Memory)**.
+  - **Unload / sleep a single tab:** Hover or select any background tab in Cue and click the moon (unload) icon, press `⌘K` / `Ctrl+K` → **Unload / Suspend Tab (Save Memory)**, or run **Unload Current Tab (Save Memory)** (`> unload current`).
+  - **Unload idle, background, or group tabs:** Run **Suspend Idle Tabs** (`> unload idle` / `> suspend idle`), **Suspend Other Background Tabs** (`> unload other`), or **Unload Current Group Tabs** (`> unload group`, or `⌘K` on any group in `/g`).
+  - **Archive tabs (like Arc):** Click the archive icon on any tab row, press `⌘K` → **Archive Tab (Save & Close)**, or run **Archive Current Tab**, **Archive Idle Tabs**, **Archive Other Background Tabs**, or **Archive Current Group**.
+  - **Browse & restore archived tabs:** Type `/a` (or run **View Archived Tabs…**), or simply search for an archived tab by title/URL in **All** mode and press `Enter` to restore it.
+  - **Optional auto-unload / auto-archive:** Open **Cue Options → Idle Tab Memory Saver & Auto-Archive** to set your inactivity threshold and optionally enable automatic unloading or archiving of idle tabs.
 
 - **What it does:**
-  - Uses Chrome's native `chrome.tabs.discard` API to unload tab memory while keeping tabs visible in place inside the tab strip and inside their existing tab groups.
-  - Marks suspended tabs with a `Sleeping` badge in Cue; clicking or switching back to a sleeping tab reloads it automatically.
-  - Safely skips the active tab, pinned tabs, audible tabs (playing audio/video), and already-suspended tabs. **Suspend Idle Tabs** uses your configured inactivity threshold from **Options** (default: 1 hour).
+  - **Unload / Suspend** uses Chrome's native `chrome.tabs.discard` API to free tab memory while keeping tabs visible in place (marked with a `Sleeping` badge in Cue).
+  - **Archive** saves the tab's title, URL, favicon, group name/color, and timestamp into persistent local storage (`cueArchivedTabs`, up to 200 tabs across restarts) and closes the live tab so it consumes zero RAM.
+  - Both safely skip pinned tabs and audible tabs playing audio/video.
 
 ---
 

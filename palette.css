@@ -79,6 +79,10 @@
   --qc-sleeping-bg: rgba(148, 163, 184, 0.12);
   --qc-sleeping-bd: rgba(148, 163, 184, 0.2);
 
+  --qc-archived-fg: #fdba74;
+  --qc-archived-bg: rgba(251, 146, 60, 0.14);
+  --qc-archived-bd: rgba(251, 146, 60, 0.24);
+
   color: var(--qc-text);
 }
 
@@ -157,6 +161,10 @@
     --qc-sleeping-fg: #64748b;
     --qc-sleeping-bg: rgba(100, 116, 139, 0.1);
     --qc-sleeping-bd: rgba(100, 116, 139, 0.18);
+
+    --qc-archived-fg: #c2410c;
+    --qc-archived-bg: rgba(234, 88, 12, 0.1);
+    --qc-archived-bd: rgba(234, 88, 12, 0.2);
   }
 }
 
@@ -579,6 +587,7 @@
 .qc-icon-theme { color: var(--qc-theme-fg); background: var(--qc-theme-bg); border-color: var(--qc-theme-bd); }
 .qc-icon-ext { color: var(--qc-ext-fg); background: var(--qc-ext-bg); border-color: var(--qc-ext-bd); }
 .qc-icon-download { color: var(--qc-download-fg); background: var(--qc-download-bg); border-color: var(--qc-download-bd); }
+.qc-icon-archived { color: var(--qc-archived-fg); background: var(--qc-archived-bg); border-color: var(--qc-archived-bd); }
 
 .qc-item-main {
   flex: 1;
@@ -650,6 +659,7 @@
 .qc-badge.qc-badge-playing { color: var(--qc-playing-fg); background: var(--qc-playing-bg); border-color: var(--qc-playing-bd); }
 .qc-badge.qc-badge-muted { color: var(--qc-muted-fg); background: var(--qc-muted-bg); border-color: var(--qc-muted-bd); }
 .qc-badge.qc-badge-sleeping { color: var(--qc-sleeping-fg); background: var(--qc-sleeping-bg); border-color: var(--qc-sleeping-bd); }
+.qc-badge.qc-badge-archived { color: var(--qc-archived-fg); background: var(--qc-archived-bg); border-color: var(--qc-archived-bd); }
 
 .qc-enter-hint {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -685,9 +695,20 @@
   opacity: 1;
 }
 
+.qc-tab-btn svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+
 .qc-tab-btn:hover {
   background: var(--qc-danger-fill);
   color: var(--qc-danger-text);
+}
+
+.qc-tab-btn.qc-tab-btn-subtle:hover {
+  background: var(--qc-accent-fill);
+  color: var(--qc-accent-text);
 }
 
 .qc-footer {
@@ -730,6 +751,39 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.qc-footer-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.qc-footer-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--qc-text-faint);
+  cursor: pointer;
+  transition: background 0.08s ease, color 0.08s ease;
+}
+
+.qc-footer-icon-btn svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.9;
+}
+
+.qc-footer-icon-btn:hover {
+  background: var(--qc-fill-hover);
+  color: var(--qc-text);
 }
 
 .qc-actions-trigger {

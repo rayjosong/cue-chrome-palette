@@ -59,9 +59,15 @@ function persistMru() {
 }
 
 const MAX_CLOSED_TABS = 15;
+const MAX_ARCHIVED_TABS = 200;
+const AUTO_IDLE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const tabSnapshots = new Map();
+const recentlyArchivedTabIds = new Set();
 let closedTabsCache = [];
 let closedTabsLoaded = false;
+let archivedTabsCache = [];
+let archivedTabsLoaded = false;
+let lastAutoIdleCheckAt = 0;
 
 async function ensureClosedTabsLoaded() {
   if (closedTabsLoaded) return;
@@ -84,6 +90,83 @@ function persistClosedTabs() {
   }
 }
 
+async function ensureArchivedTabsLoaded() {
+  if (archivedTabsLoaded) return;
+  archivedTabsLoaded = true;
+  try {
+    const stored = await chrome.storage.local.get("cueArchivedTabs");
+    if (Array.isArray(stored.cueArchivedTabs)) {
+      archivedTabsCache = stored.cueArchivedTabs.slice(0, MAX_ARCHIVED_TABS);
+    }
+  } catch {
+    // Local storage might be unavailable
+  }
+}
+
+async function persistArchivedTabs() {
+  try {
+    await chrome.storage.local.set({ cueArchivedTabs: archivedTabsCache });
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+async function archiveTabs(tabsToArchive = []) {
+  await ensureArchivedTabsLoaded();
+  if (!Array.isArray(tabsToArchive) || !tabsToArchive.length) {
+    return { archivedCount: 0, closedCount: 0 };
+  }
+
+  let groupMap = new Map();
+  if (chrome.tabGroups?.query) {
+    const groups = await chrome.tabGroups.query({}).catch(() => []);
+    for (const g of groups) {
+      groupMap.set(g.id, { title: g.title || "", color: g.color || "" });
+    }
+  }
+
+  const now = Date.now();
+  const newEntries = [];
+  const seenNorm = new Set();
+  const tabIdsToClose = [];
+
+  for (const t of tabsToArchive) {
+    if (!t || t.id == null) continue;
+    tabIdsToClose.push(t.id);
+    if (!t.url || isRestrictedUrl(t.url)) continue;
+    const norm = normalizeUrlForDedup(t.url);
+    if (seenNorm.has(norm)) continue;
+    seenNorm.add(norm);
+    const grp = t.groupId != null && t.groupId !== -1 ? groupMap.get(t.groupId) : null;
+    newEntries.push({
+      id: `arch-${now}-${t.id}-${Math.random().toString(36).slice(2, 6)}`,
+      title: t.title || t.url || "Archived Tab",
+      url: t.url,
+      favIconUrl: t.favIconUrl || "",
+      archivedAt: now,
+      ...(grp?.title ? { groupTitle: grp.title } : {}),
+      ...(grp?.color ? { groupColor: grp.color } : {})
+    });
+  }
+
+  if (newEntries.length > 0) {
+    const existingFiltered = archivedTabsCache.filter((item) => !seenNorm.has(normalizeUrlForDedup(item.url)));
+    archivedTabsCache = [...newEntries, ...existingFiltered].slice(0, MAX_ARCHIVED_TABS);
+    await persistArchivedTabs();
+  }
+
+  if (tabIdsToClose.length > 0) {
+    for (const id of tabIdsToClose) recentlyArchivedTabIds.add(id);
+    try {
+      await chrome.tabs.remove(tabIdsToClose);
+    } catch {
+      for (const id of tabIdsToClose) recentlyArchivedTabIds.delete(id);
+    }
+  }
+
+  return { archivedCount: newEntries.length, closedCount: tabIdsToClose.length };
+}
+
 function recordTabSnapshot(tab) {
   if (!tab || tab.id == null || !tab.url || isRestrictedUrl(tab.url)) return;
   tabSnapshots.set(tab.id, {
@@ -93,12 +176,49 @@ function recordTabSnapshot(tab) {
   });
 }
 
+async function maybeRunAutoIdleAction() {
+  const now = Date.now();
+  if (now - lastAutoIdleCheckAt < AUTO_IDLE_CHECK_INTERVAL_MS) return;
+  lastAutoIdleCheckAt = now;
+  try {
+    const mode = await getIdleTabAutoAction();
+    if (mode !== "unload" && mode !== "archive") return;
+    await ensureMruLoaded();
+    const idleMinutes = await getIdleTabMinutes();
+    const cutoff = now - idleMinutes * 60 * 1000;
+    const all = await chrome.tabs.query({ currentWindow: true });
+    if (mode === "unload") {
+      if (!chrome.tabs.discard) return;
+      const toDiscard = all.filter((t) => {
+        if (t.active || t.pinned || t.audible || t.discarded) return false;
+        const lastAccessed = Math.max(t.lastAccessed || 0, mruTimestamps.get(t.id) || 0);
+        return lastAccessed > 0 && lastAccessed <= cutoff;
+      });
+      for (const t of toDiscard) {
+        await chrome.tabs.discard(t.id).catch(() => {});
+      }
+    } else if (mode === "archive") {
+      const toArchive = all.filter((t) => {
+        if (t.active || t.pinned || t.audible) return false;
+        const lastAccessed = Math.max(t.lastAccessed || 0, mruTimestamps.get(t.id) || 0);
+        return lastAccessed > 0 && lastAccessed <= cutoff;
+      });
+      if (toArchive.length > 0) {
+        await archiveTabs(toArchive);
+      }
+    }
+  } catch {
+    // Ignore background auto-idle errors
+  }
+}
+
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   mruTimestamps.set(tabId, Date.now());
   persistMru();
   if (chrome.tabs.get) {
     chrome.tabs.get(tabId).then(recordTabSnapshot).catch(() => {});
   }
+  maybeRunAutoIdleAction();
 });
 
 if (chrome.tabs.onUpdated) {
@@ -115,6 +235,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 
   const snap = tabSnapshots.get(tabId);
   tabSnapshots.delete(tabId);
+  if (recentlyArchivedTabIds.delete(tabId)) return;
   if (!snap || !snap.url || isRestrictedUrl(snap.url)) return;
 
   await ensureClosedTabsLoaded();
@@ -201,6 +322,11 @@ async function getIdleTabMinutes() {
   const { idleTabMinutes } = await chrome.storage.sync.get("idleTabMinutes");
   const parsed = Number(idleTabMinutes);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_IDLE_TAB_MINUTES;
+}
+
+async function getIdleTabAutoAction() {
+  const { idleTabAutoAction } = await chrome.storage.sync.get("idleTabAutoAction");
+  return idleTabAutoAction === "unload" || idleTabAutoAction === "archive" ? idleTabAutoAction : "off";
 }
 
 async function getVerticalSidebarSetting() {
@@ -371,13 +497,14 @@ async function getRecentDownloads() {
 }
 
 async function getPaletteData(query = "") {
-  await Promise.all([ensureMruLoaded(), ensureClosedTabsLoaded()]);
+  await Promise.all([ensureMruLoaded(), ensureClosedTabsLoaded(), ensureArchivedTabsLoaded()]);
 
-  const [tabs, activeTabs, quickLinks, idleTabMinutes, verticalSidebar, bookmarks, historyItems, tabGroups, frecency, mgmtData, downloads, normalWindows] = await Promise.all([
+  const [tabs, activeTabs, quickLinks, idleTabMinutes, idleTabAutoAction, verticalSidebar, bookmarks, historyItems, tabGroups, frecency, mgmtData, downloads, normalWindows] = await Promise.all([
     chrome.tabs.query({}),
     chrome.tabs.query({ active: true, currentWindow: true }),
     getQuickLinks(),
     getIdleTabMinutes(),
+    getIdleTabAutoAction(),
     getVerticalSidebarSetting(),
     getBookmarks(),
     searchHistory(query),
@@ -458,6 +585,7 @@ async function getPaletteData(query = "") {
   });
 
   const closedTabs = [...closedTabsCache];
+  const archivedTabs = [...archivedTabsCache];
 
   return {
     activeTab: activeTab
@@ -476,8 +604,10 @@ async function getPaletteData(query = "") {
     tabs: mappedTabs,
     tabGroups: Array.from(groupMap.values()),
     closedTabs,
+    archivedTabs,
     quickLinks,
     idleTabMinutes,
+    idleTabAutoAction,
     verticalSidebar,
     chromePages: CHROME_PAGES,
     bookmarks,
@@ -1282,9 +1412,166 @@ async function executeAction(payload) {
     }
     case "DISCARD_TAB": {
       if (!chrome.tabs.discard) return { ok: false, error: "Tab discard API unavailable" };
-      if (payload.tabId == null) return { ok: false, error: "No tab specified" };
-      await chrome.tabs.discard(payload.tabId);
-      return { ok: true, toast: "Suspended tab to save memory" };
+      let targetTabId = payload.tabId;
+      let targetTab = null;
+      if (targetTabId == null) {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        targetTab = active || null;
+        targetTabId = targetTab?.id ?? null;
+      } else if (chrome.tabs.get) {
+        targetTab = await chrome.tabs.get(targetTabId).catch(() => null);
+      }
+      if (targetTabId == null) return { ok: false, error: "No tab specified" };
+      if (targetTab?.active) {
+        const sameWin = await chrome.tabs.query({ windowId: targetTab.windowId });
+        const fallback =
+          sameWin.find((t) => t.id !== targetTabId && !t.discarded) ||
+          sameWin.find((t) => t.id !== targetTabId);
+        if (!fallback) {
+          return { ok: false, error: "Cannot unload the only open tab in this window" };
+        }
+        await chrome.tabs.update(fallback.id, { active: true });
+      }
+      await chrome.tabs.discard(targetTabId);
+      return { ok: true, toast: "Unloaded tab to save memory" };
+    }
+    case "DISCARD_GROUP_TABS": {
+      if (!chrome.tabs.discard) return { ok: false, error: "Tab discard API unavailable" };
+      let groupId = payload.groupId;
+      if (groupId == null || groupId === -1) {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        groupId = active ? active.groupId : -1;
+      }
+      if (groupId == null || groupId === -1) {
+        return { ok: false, error: "No tab group selected" };
+      }
+      const groupTabs = await chrome.tabs.query({ groupId });
+      const toDiscard = groupTabs.filter((t) => !t.active && !t.audible && !t.discarded);
+      for (const t of toDiscard) {
+        await chrome.tabs.discard(t.id);
+      }
+      return {
+        ok: true,
+        discardedCount: toDiscard.length,
+        toast: toDiscard.length
+          ? `Unloaded ${toDiscard.length} ${toDiscard.length === 1 ? "tab" : "tabs"} in group`
+          : "No active tabs in group to unload"
+      };
+    }
+    case "ARCHIVE_TAB": {
+      let targetTab = null;
+      if (payload.tabId != null) {
+        targetTab = await chrome.tabs.get(payload.tabId).catch(() => null);
+      } else {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        targetTab = active || null;
+      }
+      if (!targetTab) return { ok: false, error: "No tab found to archive" };
+      if (!targetTab.url || isRestrictedUrl(targetTab.url)) {
+        return { ok: false, error: "Cannot archive Chrome internal pages" };
+      }
+      const { archivedCount } = await archiveTabs([targetTab]);
+      return {
+        ok: true,
+        archivedCount,
+        toast: "Archived tab (view in /a)"
+      };
+    }
+    case "ARCHIVE_IDLE_TABS": {
+      await ensureMruLoaded();
+      const rawMinutes = Number(payload.idleMinutes);
+      const idleMinutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? Math.floor(rawMinutes) : await getIdleTabMinutes();
+      const cutoff = Date.now() - idleMinutes * 60 * 1000;
+      const all = await chrome.tabs.query({ currentWindow: true });
+      const toArchive = all.filter((t) => {
+        if (t.active || t.pinned || t.audible) return false;
+        const lastAccessed = Math.max(t.lastAccessed || 0, mruTimestamps.get(t.id) || 0);
+        return lastAccessed > 0 && lastAccessed <= cutoff;
+      });
+      if (!toArchive.length) {
+        return {
+          ok: true,
+          archivedCount: 0,
+          toast: `No idle tabs to archive (${idleMinutes}+ min)`
+        };
+      }
+      const { archivedCount, closedCount } = await archiveTabs(toArchive);
+      const count = archivedCount || closedCount;
+      return {
+        ok: true,
+        archivedCount: count,
+        toast: `Archived ${count} idle ${count === 1 ? "tab" : "tabs"} (view in /a)`
+      };
+    }
+    case "ARCHIVE_OTHER_TABS": {
+      const all = await chrome.tabs.query({ currentWindow: true });
+      const toArchive = all.filter((t) => !t.active && !t.pinned && !t.audible);
+      if (!toArchive.length) {
+        return { ok: true, archivedCount: 0, toast: "No background tabs to archive" };
+      }
+      const { archivedCount, closedCount } = await archiveTabs(toArchive);
+      const count = archivedCount || closedCount;
+      return {
+        ok: true,
+        archivedCount: count,
+        toast: `Archived ${count} background ${count === 1 ? "tab" : "tabs"} (view in /a)`
+      };
+    }
+    case "ARCHIVE_GROUP_TABS": {
+      let groupId = payload.groupId;
+      if (groupId == null || groupId === -1) {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        groupId = active ? active.groupId : -1;
+      }
+      if (groupId == null || groupId === -1) {
+        return { ok: false, error: "No tab group selected" };
+      }
+      const groupTabs = await chrome.tabs.query({ groupId });
+      if (!groupTabs.length) {
+        return { ok: false, error: "No tabs in group to archive" };
+      }
+      const { archivedCount, closedCount } = await archiveTabs(groupTabs);
+      const count = archivedCount || closedCount;
+      return {
+        ok: true,
+        archivedCount: count,
+        toast: `Archived ${count} ${count === 1 ? "tab" : "tabs"} from group (view in /a)`
+      };
+    }
+    case "RESTORE_ARCHIVED_TAB": {
+      await ensureArchivedTabsLoaded();
+      const idx = archivedTabsCache.findIndex((a) => a.id === payload.archiveId);
+      if (idx === -1) return { ok: false, error: "Archived tab is no longer available" };
+      const entry = archivedTabsCache[idx];
+      if (!payload.keepInArchive) {
+        archivedTabsCache.splice(idx, 1);
+        await persistArchivedTabs();
+      }
+      if (!entry?.url) return { ok: false, error: "Archived tab has no URL" };
+      await chrome.tabs.create({ url: entry.url, active: true });
+      return {
+        ok: true,
+        toast: payload.keepInArchive ? "Opened archived tab" : "Restored archived tab"
+      };
+    }
+    case "DELETE_ARCHIVED_TAB": {
+      await ensureArchivedTabsLoaded();
+      const idx = archivedTabsCache.findIndex((a) => a.id === payload.archiveId);
+      if (idx === -1) return { ok: false, error: "Archived tab not found" };
+      archivedTabsCache.splice(idx, 1);
+      await persistArchivedTabs();
+      return { ok: true, toast: "Removed tab from archive" };
+    }
+    case "CLEAR_ARCHIVED_TABS": {
+      await ensureArchivedTabsLoaded();
+      const clearedCount = archivedTabsCache.length;
+      archivedTabsCache = [];
+      await persistArchivedTabs();
+      return {
+        ok: true,
+        clearedCount,
+        toast: clearedCount ? `Cleared ${clearedCount} archived ${clearedCount === 1 ? "tab" : "tabs"}` : "Archive is already empty"
+      };
     }
     case "DISCARD_IDLE_TABS": {
       if (!chrome.tabs.discard) return { ok: false, error: "Tab discard API unavailable" };

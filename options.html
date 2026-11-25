@@ -103,6 +103,38 @@
         padding-top: 18px;
         border-top: 1px solid rgba(255, 255, 255, 0.08);
       }
+      .setting-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 14px;
+      }
+      .field-label {
+        display: block;
+        font-size: 11.5px;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.68);
+        margin-bottom: 6px;
+      }
+      .link-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      a.link-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.08);
+        color: #f4f4f6;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        text-decoration: none;
+      }
+      a.link-btn:hover {
+        background: rgba(255, 255, 255, 0.14);
+      }
       h2 {
         margin: 0 0 6px;
         font-size: 15px;
@@ -152,6 +184,17 @@
         .status {
           color: #15803d;
         }
+        .field-label {
+          color: rgba(15, 23, 42, 0.72);
+        }
+        a.link-btn {
+          border-color: rgba(15, 23, 42, 0.14);
+          background: rgba(15, 23, 42, 0.05);
+          color: #111827;
+        }
+        a.link-btn:hover {
+          background: rgba(15, 23, 42, 0.1);
+        }
       }
     </style>
   </head>
@@ -183,19 +226,31 @@
       </div>
 
       <div class="theme-section">
-        <h2>Idle Tab Cleanup</h2>
+        <h2>Idle Tab Memory Saver &amp; Auto-Archive</h2>
         <p class="sub">
-          Choose how long an unpinned, silent tab must be inactive before <strong>Close Idle Tabs</strong> closes it.
+          Configure how long an unpinned, silent tab must be inactive for <strong>Suspend Idle Tabs</strong>, <strong>Archive Idle Tabs</strong>, and <strong>Close Idle Tabs</strong>. Optionally auto-unload or auto-archive idle tabs in the background (like Arc — archived tabs stay searchable in <code>/a</code>).
         </p>
-        <div style="max-width: 220px;">
-          <select id="idle-minutes">
-            <option value="15">15 minutes</option>
-            <option value="30">30 minutes</option>
-            <option value="60" selected>1 hour (default)</option>
-            <option value="120">2 hours</option>
-            <option value="240">4 hours</option>
-            <option value="1440">24 hours</option>
-          </select>
+        <div class="setting-grid">
+          <div>
+            <label class="field-label" for="idle-minutes">Inactivity threshold</label>
+            <select id="idle-minutes">
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="60" selected>1 hour (default)</option>
+              <option value="120">2 hours</option>
+              <option value="240">4 hours</option>
+              <option value="720">12 hours</option>
+              <option value="1440">24 hours</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="idle-auto-action">Automatic action on idle tabs</label>
+            <select id="idle-auto-action">
+              <option value="off" selected>Manual only (default)</option>
+              <option value="unload">Auto-unload (sleep) to save memory</option>
+              <option value="archive">Auto-archive (close &amp; save to /a)</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -207,6 +262,19 @@
         <div>
           <button id="theme-btn">Enable theme &amp; extension management</button>
           <span id="theme-status" class="status"></span>
+        </div>
+      </div>
+
+      <div class="theme-section">
+        <h2>About, Feedback &amp; Share</h2>
+        <p class="sub">
+          Found a bug, have a feature idea, or want to share Cue with a teammate?
+        </p>
+        <div class="link-row">
+          <a class="link-btn" href="https://github.com/rayjosong/cue-chrome-palette" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+          <a class="link-btn" href="https://github.com/rayjosong/cue-chrome-palette/issues" target="_blank" rel="noopener noreferrer">Report Issue / Request Feature</a>
+          <a class="link-btn" href="https://github.com/rayjosong/cue-chrome-palette/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+          <a class="link-btn" href="https://buymeacoffee.com/xqpfm09t8t" target="_blank" rel="noopener noreferrer">Buy Me a Coffee</a>
         </div>
       </div>
     </div>

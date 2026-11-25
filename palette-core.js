@@ -24,6 +24,10 @@
     { id: "commands", label: "Commands", icon: "zap" }
   ];
 
+  const REPO_URL = "https://github.com/rayjosong/cue-chrome-palette";
+  const ISSUES_URL = "https://github.com/rayjosong/cue-chrome-palette/issues";
+  const SUPPORT_URL = "https://buymeacoffee.com/xqpfm09t8t";
+
   const MODE_DEFINITIONS = {
     all: { id: "all", label: "All", singularLabel: "result", icon: "search" },
     tabs: { id: "tabs", label: "Tabs", singularLabel: "tab", icon: "globe" },
@@ -32,10 +36,26 @@
     bookmarks: { id: "bookmarks", label: "Bookmarks", singularLabel: "bookmark", icon: "star" },
     history: { id: "history", label: "History", singularLabel: "history item", icon: "history" },
     closed: { id: "closed", label: "Closed", singularLabel: "recently closed tab", icon: "rotateCcw" },
+    archived: { id: "archived", label: "Archived", singularLabel: "archived tab", icon: "archive" },
     themes: { id: "themes", label: "Themes", singularLabel: "Chrome theme", icon: "palette" },
     extensions: { id: "extensions", label: "Extensions", singularLabel: "extension", icon: "puzzle" },
     downloads: { id: "downloads", label: "Downloads", singularLabel: "download", icon: "download" }
   };
+
+  function formatRelativeTime(timestamp, now = Date.now()) {
+    const ts = Number(timestamp);
+    if (!Number.isFinite(ts) || ts <= 0) return "Archived";
+    const diffSec = Math.max(0, Math.floor((now - ts) / 1000));
+    if (diffSec < 60) return "Just now";
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 30) return `${diffDay}d ago`;
+    const diffMo = Math.floor(diffDay / 30);
+    return `${diffMo}mo ago`;
+  }
 
   function getModeDefinition(mode) {
     return MODE_DEFINITIONS[mode] || MODE_DEFINITIONS.all;
@@ -264,6 +284,9 @@
     }
     if (trimmed === "/c" || trimmed.startsWith("/c ")) {
       return { mode: "closed", query: trimmed.slice(2).trim(), prefixLabel: "Closed", isPrefix: true, rawPrefix: "/c" };
+    }
+    if (trimmed === "/a" || trimmed.startsWith("/a ")) {
+      return { mode: "archived", query: trimmed.slice(2).trim(), prefixLabel: "Archived", isPrefix: true, rawPrefix: "/a" };
     }
     if (trimmed === "/t" || trimmed.startsWith("/t ")) {
       return { mode: "themes", query: trimmed.slice(2).trim(), prefixLabel: "Themes", isPrefix: true, rawPrefix: "/t" };
@@ -539,9 +562,13 @@
     }
 
     const discardableOtherTabIds = [];
+    const archivableOtherTabIds = [];
     for (const t of targetTabs) {
-      if (!t.active && !(activeTab && t.id === activeTab.id) && !t.pinned && !t.audible && !t.discarded) {
-        discardableOtherTabIds.push(t.id);
+      if (!t.active && !(activeTab && t.id === activeTab.id) && !t.pinned && !t.audible) {
+        archivableOtherTabIds.push(t.id);
+        if (!t.discarded) {
+          discardableOtherTabIds.push(t.id);
+        }
       }
     }
 
@@ -683,6 +710,7 @@
       idleMinutes,
       discardableIdleTabIds,
       discardableOtherTabIds,
+      archivableOtherTabIds,
       tabsToRightIds,
       tabsToLeftIds
     };
@@ -693,6 +721,7 @@
     const windows = Array.isArray(contextData) ? [] : (contextData?.windows || []);
     const bookmarks = Array.isArray(contextData) ? [] : (contextData?.bookmarks || []);
     const tabGroupsList = Array.isArray(contextData) ? [] : (contextData?.tabGroups || []);
+    const archivedTabsList = Array.isArray(contextData) ? [] : (contextData?.archivedTabs || []);
     const actions = [];
 
     const audibleTab = allTabs.find((t) => t.audible);
@@ -892,6 +921,42 @@
                   actionDescriptor: {
                     type: "EXECUTE_ACTION",
                     payload: { action: "BOOKMARK_TAB_GROUP", groupId: activeTab.groupId }
+                  }
+                },
+                {
+                  id: "act-discard-group",
+                  kind: "action",
+                  section: "Actions",
+                  title: `Unload Current Group Tabs (${groupTabs.length})`,
+                  subtitle: `Sleep inactive tabs in "${groupTitle}" to free browser memory`,
+                  badge: "Memory",
+                  badgeClass: "qc-badge-action",
+                  iconClass: "qc-icon-action",
+                  iconName: "moon",
+                  enterVerb: "Unload",
+                  priority: 11.08,
+                  searchText: "unload suspend sleep discard current tab group memory saver",
+                  actionDescriptor: {
+                    type: "EXECUTE_ACTION",
+                    payload: { action: "DISCARD_GROUP_TABS", groupId: activeTab.groupId }
+                  }
+                },
+                {
+                  id: "act-archive-group",
+                  kind: "action",
+                  section: "Actions",
+                  title: `Archive Current Group (${groupTabs.length})`,
+                  subtitle: `Save all tabs in "${groupTitle}" to Archived Tabs (/a) and close them`,
+                  badge: "Archive",
+                  badgeClass: "qc-badge-archived",
+                  iconClass: "qc-icon-archived",
+                  iconName: "archive",
+                  enterVerb: "Archive",
+                  priority: 11.06,
+                  searchText: "archive current tab group close save like arc memory",
+                  actionDescriptor: {
+                    type: "EXECUTE_ACTION",
+                    payload: { action: "ARCHIVE_GROUP_TABS", groupId: activeTab.groupId }
                   }
                 },
                 {
@@ -1412,7 +1477,51 @@
 
     const discardableIdleTabIds = analysis?.discardableIdleTabIds || [];
     const discardableOtherTabIds = analysis?.discardableOtherTabIds || [];
+    const archivableOtherTabIds = analysis?.archivableOtherTabIds || [];
+    const idleTabIds = analysis?.idleTabIds || [];
     const idleMinutes = analysis?.idleMinutes ?? 60;
+
+    if (activeTab && windowTabs.length > 1) {
+      actions.push({
+        id: "act-discard-current",
+        kind: "action",
+        section: "Actions",
+        title: "Unload Current Tab (Save Memory)",
+        subtitle: "Switch away and put the current tab to sleep without closing it",
+        badge: "Memory",
+        badgeClass: "qc-badge-action",
+        iconClass: "qc-icon-action",
+        iconName: "moon",
+        enterVerb: "Unload",
+        priority: 9.18,
+        searchText: "unload suspend sleep discard hibernate current tab memory saver arc",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "DISCARD_TAB", tabId: activeTab.id }
+        }
+      });
+    }
+
+    if (activeTab && activeTab.url && /^https?:\/\//i.test(activeTab.url)) {
+      actions.push({
+        id: "act-archive-current",
+        kind: "action",
+        section: "Actions",
+        title: "Archive Current Tab",
+        subtitle: "Save to Archived Tabs (/a) and close to free memory (like Arc)",
+        badge: "Archive",
+        badgeClass: "qc-badge-archived",
+        iconClass: "qc-icon-archived",
+        iconName: "archive",
+        enterVerb: "Archive",
+        priority: 9.19,
+        searchText: "archive current tab save close arc memory unload",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "ARCHIVE_TAB", tabId: activeTab.id }
+        }
+      });
+    }
 
     actions.push(
       {
@@ -1425,15 +1534,15 @@
             : "Suspend Idle Tabs (Memory Saver)",
         subtitle:
           discardableIdleTabIds.length > 0
-            ? `Discard ${discardableIdleTabIds.length} inactive ${discardableIdleTabIds.length === 1 ? "tab" : "tabs"} (${idleMinutes}+ min) to free memory without closing`
-            : `Free memory for tabs inactive for ${idleMinutes}+ min without closing them`,
+            ? `Unload ${discardableIdleTabIds.length} inactive ${discardableIdleTabIds.length === 1 ? "tab" : "tabs"} (${idleMinutes}+ min) to free memory without closing`
+            : `Free memory by unloading tabs inactive for ${idleMinutes}+ min without closing them`,
         badge: discardableIdleTabIds.length > 0 ? `${discardableIdleTabIds.length} Idle` : "Memory",
         badgeClass: "qc-badge-action",
         iconClass: "qc-icon-action",
-        iconName: "zap",
+        iconName: "moon",
         enterVerb: "Suspend",
         priority: discardableIdleTabIds.length > 0 ? 13.8 : 9.1,
-        searchText: "suspend discard idle tabs sleep memory saver hibernate",
+        searchText: "unload suspend discard idle tabs sleep memory saver hibernate arc",
         actionDescriptor: {
           type: "EXECUTE_ACTION",
           payload: { action: "DISCARD_IDLE_TABS", idleMinutes }
@@ -1447,19 +1556,105 @@
           discardableOtherTabIds.length > 0
             ? `Suspend Other Background Tabs (${discardableOtherTabIds.length})`
             : "Suspend Other Background Tabs",
-        subtitle: "Free memory by suspending all other non-audible background tabs in this window",
+        subtitle: "Free memory by unloading all other non-audible background tabs in this window",
         badge: "Memory",
         badgeClass: "qc-badge-action",
         iconClass: "qc-icon-action",
-        iconName: "zap",
+        iconName: "moon",
         enterVerb: "Suspend",
         priority: 9.05,
-        searchText: "suspend discard other background tabs sleep memory saver hibernate",
+        searchText: "unload suspend discard other background tabs sleep memory saver hibernate arc",
         actionDescriptor: {
           type: "EXECUTE_ACTION",
           payload: { action: "DISCARD_OTHER_TABS" }
         }
       },
+      {
+        id: "act-archive-idle",
+        kind: "action",
+        section: "Actions",
+        title:
+          idleTabIds.length > 0
+            ? `Archive Idle Tabs (${idleTabIds.length})`
+            : "Archive Idle Tabs (Like Arc)",
+        subtitle:
+          idleTabIds.length > 0
+            ? `Save ${idleTabIds.length} inactive ${idleTabIds.length === 1 ? "tab" : "tabs"} (${idleMinutes}+ min) to /a and close to free memory`
+            : `Archive tabs inactive for ${idleMinutes}+ min into /a and close them`,
+        badge: idleTabIds.length > 0 ? `${idleTabIds.length} Idle` : "Archive",
+        badgeClass: "qc-badge-archived",
+        iconClass: "qc-icon-archived",
+        iconName: "archive",
+        enterVerb: "Archive",
+        priority: idleTabIds.length > 0 ? 13.7 : 9.08,
+        searchText: "archive idle stale unused tabs like arc save close memory /a",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "ARCHIVE_IDLE_TABS", idleMinutes }
+        }
+      },
+      {
+        id: "act-archive-others",
+        kind: "action",
+        section: "Actions",
+        title:
+          archivableOtherTabIds.length > 0
+            ? `Archive Other Background Tabs (${archivableOtherTabIds.length})`
+            : "Archive Other Background Tabs",
+        subtitle: "Save all other unpinned background tabs to /a and close them to free memory",
+        badge: "Archive",
+        badgeClass: "qc-badge-archived",
+        iconClass: "qc-icon-archived",
+        iconName: "archive",
+        enterVerb: "Archive",
+        priority: 9.02,
+        searchText: "archive other background tabs like arc save close memory /a",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "ARCHIVE_OTHER_TABS" }
+        }
+      },
+      {
+        id: "act-view-archived",
+        kind: "action",
+        section: "Actions",
+        title:
+          archivedTabsList.length > 0
+            ? `View Archived Tabs (${archivedTabsList.length})…`
+            : "View Archived Tabs…",
+        subtitle: "Browse and restore archived tabs (/a)",
+        badge: "Archive",
+        badgeClass: "qc-badge-archived",
+        iconClass: "qc-icon-archived",
+        iconName: "archive",
+        enterVerb: "Browse",
+        priority: archivedTabsList.length > 0 ? 10.6 : 8.6,
+        keepsOpen: true,
+        searchText: "view browse restore archived tabs archive /a arc",
+        actionDescriptor: { type: "ENTER_MODE", prefix: "/a " }
+      },
+      ...(archivedTabsList.length > 0
+        ? [
+            {
+              id: "act-clear-archived",
+              kind: "action",
+              section: "Actions",
+              title: `Clear Archived Tabs (${archivedTabsList.length})`,
+              subtitle: "Permanently remove all tabs saved in Archived Tabs (/a)",
+              badge: "Archive",
+              badgeClass: "qc-badge-archived",
+              iconClass: "qc-icon-archived",
+              iconName: "x",
+              enterVerb: "Clear",
+              priority: 7.9,
+              searchText: "clear delete empty archived tabs archive /a",
+              actionDescriptor: {
+                type: "EXECUTE_ACTION",
+                payload: { action: "CLEAR_ARCHIVED_TABS" }
+              }
+            }
+          ]
+        : []),
       {
         id: "act-sort-tabs",
         kind: "action",
@@ -1614,7 +1809,61 @@
             payload: { action: "TOGGLE_VERTICAL_SIDEBAR" }
           }
         };
-      })()
+      })(),
+      {
+        id: "act-report-issue",
+        kind: "action",
+        section: "Actions",
+        title: "Report Issue / Request Feature on GitHub",
+        subtitle: ISSUES_URL,
+        badge: "Issues",
+        badgeClass: "qc-badge-chrome",
+        iconClass: "qc-icon-chrome",
+        iconName: "bug",
+        enterVerb: "Open",
+        priority: 7.7,
+        searchText: "report bug issue feedback feature request github help support cue",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "OPEN_URL", url: ISSUES_URL }
+        }
+      },
+      {
+        id: "act-open-repo",
+        kind: "action",
+        section: "Actions",
+        title: "Cue on GitHub (Share / Star)",
+        subtitle: REPO_URL,
+        badge: "GitHub",
+        badgeClass: "qc-badge-chrome",
+        iconClass: "qc-icon-chrome",
+        iconName: "github",
+        enterVerb: "Open",
+        priority: 7.6,
+        searchText: "cue github repo repository source code share extension star link about",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "OPEN_URL", url: REPO_URL }
+        }
+      },
+      {
+        id: "act-support-coffee",
+        kind: "action",
+        section: "Actions",
+        title: "Support Cue (Buy Me a Coffee)",
+        subtitle: SUPPORT_URL,
+        badge: "Support",
+        badgeClass: "qc-badge-chrome",
+        iconClass: "qc-icon-chrome",
+        iconName: "coffee",
+        enterVerb: "Open",
+        priority: 7.5,
+        searchText: "buy me a coffee support donate sponsor tip cue",
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "OPEN_URL", url: SUPPORT_URL }
+        }
+      }
     );
 
     return actions;
@@ -1712,6 +1961,34 @@
         payload: { action: "RESTORE_SESSION", sessionId: c.sessionId }
       }
     }));
+
+    const archivedTabs = (data.archivedTabs || []).map((a) => {
+      const grpHex = a.groupColor ? GROUP_COLOR_HEX[a.groupColor] || "" : "";
+      const ageLabel = formatRelativeTime(a.archivedAt, now);
+      return {
+        id: `archived-${a.id}`,
+        kind: "archived",
+        section: "Archived Tabs",
+        archiveId: a.id,
+        title: a.title || a.url || "Archived Tab",
+        subtitle: a.url || "",
+        favIconUrl: a.favIconUrl || "",
+        archivedAt: a.archivedAt || 0,
+        groupTitle: a.groupTitle || "",
+        groupColor: grpHex || undefined,
+        badge: a.groupTitle ? `${a.groupTitle} · ${ageLabel}` : ageLabel,
+        badgeClass: "qc-badge-archived",
+        iconClass: "qc-icon-archived",
+        iconName: "archive",
+        enterVerb: "Restore",
+        priority: 12.5,
+        searchText: `archived archive ${a.title || ""} ${a.url || ""} ${a.groupTitle || ""}`,
+        actionDescriptor: {
+          type: "EXECUTE_ACTION",
+          payload: { action: "RESTORE_ARCHIVED_TAB", archiveId: a.id }
+        }
+      };
+    });
 
     const quickLinks = [];
     const qParts = query.split(/\s+/);
@@ -1959,10 +2236,11 @@
     }));
 
     const modeCounts = {
-      all: tabs.length + tabGroups.length + closedTabs.length + bookmarks.length + actions.length + chromePages.length + themes.length + extensions.length + downloads.length,
+      all: tabs.length + tabGroups.length + closedTabs.length + archivedTabs.length + bookmarks.length + actions.length + chromePages.length + themes.length + extensions.length + downloads.length,
       tabs: tabs.length,
       groups: tabGroups.length,
       closed: closedTabs.length,
+      archived: archivedTabs.length,
       bookmarks: bookmarks.length,
       history: history.length,
       commands: actions.length + chromePages.length + themes.length + extensions.length,
@@ -1980,6 +2258,8 @@
       pool = tabGroups;
     } else if (mode === "closed") {
       pool = closedTabs;
+    } else if (mode === "archived") {
+      pool = archivedTabs;
     } else if (mode === "bookmarks") {
       pool = bookmarks;
     } else if (mode === "history") {
@@ -2003,12 +2283,13 @@
         ...tabs.slice(0, 8),
         ...tabGroups.slice(0, 3),
         ...closedTabs.slice(0, 3),
+        ...archivedTabs.slice(0, 3),
         ...sortedLinks.slice(0, 4),
         ...sortedActions.slice(0, 5),
         ...chromePages.slice(0, 3)
       ];
     } else {
-      pool = [...quickLinks, ...tabs, ...tabGroups, ...closedTabs, ...actions, ...chromePages, ...themes, ...extensions, ...downloads, ...bookmarks, ...history];
+      pool = [...quickLinks, ...tabs, ...tabGroups, ...closedTabs, ...archivedTabs, ...actions, ...chromePages, ...themes, ...extensions, ...downloads, ...bookmarks, ...history];
     }
 
     for (const item of pool) {
@@ -2183,11 +2464,15 @@
   }
 
   const Core = {
+    REPO_URL,
+    ISSUES_URL,
+    SUPPORT_URL,
     GROUP_COLOR_HEX,
     GROUP_COLORS,
     CHIP_MODES,
     MODE_DEFINITIONS,
     getModeDefinition,
+    formatRelativeTime,
     hexToRgba,
     looksLikeUrl,
     normalizeUrl,

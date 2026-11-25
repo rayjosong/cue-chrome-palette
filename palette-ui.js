@@ -208,6 +208,33 @@
     const hints = document.createElement("div");
     hints.className = "qc-hints";
 
+    const footerRight = document.createElement("div");
+    footerRight.className = "qc-footer-right";
+
+    const repoBtn = document.createElement("button");
+    repoBtn.type = "button";
+    repoBtn.className = "qc-footer-icon-btn";
+    repoBtn.title = "Cue on GitHub (Share / Star)";
+    repoBtn.setAttribute("aria-label", "Cue on GitHub");
+    repoBtn.appendChild(createSvgIcon("github"));
+    repoBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "OPEN_URL", url: Core.REPO_URL } });
+      closeWithMotion();
+    });
+
+    const issueBtn = document.createElement("button");
+    issueBtn.type = "button";
+    issueBtn.className = "qc-footer-icon-btn";
+    issueBtn.title = "Report Issue / Request Feature";
+    issueBtn.setAttribute("aria-label", "Report Issue on GitHub");
+    issueBtn.appendChild(createSvgIcon("bug"));
+    issueBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "OPEN_URL", url: Core.ISSUES_URL } });
+      closeWithMotion();
+    });
+
     const actionsTrigger = document.createElement("button");
     actionsTrigger.type = "button";
     actionsTrigger.className = "qc-actions-trigger";
@@ -216,7 +243,8 @@
     actKbd.className = "qc-kbd";
     actKbd.textContent = `${modSymbol}K`;
     actionsTrigger.append(actText, actKbd);
-    footer.append(hints, actionsTrigger);
+    footerRight.append(repoBtn, issueBtn, actionsTrigger);
+    footer.append(hints, footerRight);
 
     const popover = document.createElement("div");
     popover.className = "qc-actions-popover";
@@ -242,6 +270,7 @@
       tabs: [],
       tabGroups: [],
       closedTabs: [],
+      archivedTabs: [],
       quickLinks: [],
       chromePages: [],
       bookmarks: [],
@@ -788,11 +817,23 @@
         }
         if (!item.discarded && (!data.activeTab || item.tabId !== data.activeTab.id)) {
           list.push({
-            title: "Suspend Tab (Save Memory)",
-            iconName: "zap",
+            title: "Unload / Suspend Tab (Save Memory)",
+            iconName: "moon",
             closesPalette: true,
             run: async () => {
               const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "DISCARD_TAB", tabId: item.tabId } });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error, true);
+            }
+          });
+        }
+        if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
+          list.push({
+            title: "Archive Tab (Save & Close)",
+            iconName: "archive",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({ type: "EXECUTE_ACTION", payload: { action: "ARCHIVE_TAB", tabId: item.tabId } });
               if (res?.toast) showToast(res.toast);
               else if (res?.error) showToast(res.error, true);
             }
@@ -902,6 +943,32 @@
             }
           },
           {
+            title: "Unload All Tabs in Group (Save Memory)",
+            iconName: "moon",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "DISCARD_GROUP_TABS", groupId: item.groupId }
+              });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error, true);
+            }
+          },
+          {
+            title: "Archive All Tabs in Group",
+            iconName: "archive",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "ARCHIVE_GROUP_TABS", groupId: item.groupId }
+              });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error, true);
+            }
+          },
+          {
             title: "Close All Tabs in Group",
             iconName: "x",
             closesPalette: true,
@@ -911,6 +978,74 @@
             }
           }
         );
+      } else if (item.kind === "archived") {
+        list.push(
+          {
+            title: "Restore Tab (Unarchive)",
+            shortcut: "↵",
+            iconName: "rotateCcw",
+            closesPalette: true,
+            run: () => item.run()
+          },
+          {
+            title: "Open Copy (Keep in Archive)",
+            iconName: "globe",
+            closesPalette: true,
+            run: async () => {
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "RESTORE_ARCHIVED_TAB", archiveId: item.archiveId, keepInArchive: true }
+              });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error, true);
+            }
+          }
+        );
+        if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
+          list.push(
+            {
+              title: "Copy URL",
+              shortcut: `${modSymbol}C`,
+              iconName: "link",
+              closesPalette: true,
+              run: async () => {
+                const ok = await copyToClipboard(item.subtitle || "");
+                showToast(ok ? "Copied URL to clipboard" : "Failed to copy");
+              }
+            },
+            {
+              title: "Copy as Markdown",
+              iconName: "copy",
+              closesPalette: true,
+              run: async () => {
+                const ok = await copyToClipboard(Core.formatMarkdownLink(item.title, item.subtitle));
+                showToast(ok ? "Copied Markdown link to clipboard" : "Failed to copy");
+              }
+            },
+            {
+              title: "Copy Clean URL",
+              iconName: "link",
+              closesPalette: true,
+              run: async () => {
+                const ok = await copyToClipboard(Core.stripTrackingParams(item.subtitle));
+                showToast(ok ? "Copied clean URL to clipboard" : "Failed to copy");
+              }
+            }
+          );
+        }
+        list.push({
+          title: "Remove from Archive",
+          iconName: "x",
+          closesPalette: false,
+          run: async () => {
+            const res = await sendRuntimeMessage({
+              type: "EXECUTE_ACTION",
+              payload: { action: "DELETE_ARCHIVED_TAB", archiveId: item.archiveId }
+            });
+            if (res?.toast) showToast(res.toast);
+            else if (res?.error) showToast(res.error, true);
+          }
+        });
       } else if (item.kind === "extension") {
         list.push({
           title: item.enterVerb || "Toggle Extension",
@@ -1625,7 +1760,7 @@
             allBtn.addEventListener("click", () => {
               chipMode = "all";
               const raw = input.value.trimStart();
-              if (/^(>|@|\*|\/[hgcted](\s|$))/.test(raw)) {
+              if (/^(>|@|\*|\/[hgcteda](\s|$))/.test(raw)) {
                 input.value = cleanQuery;
               }
               selectedIndex = 0;
@@ -1743,6 +1878,50 @@
         meta.appendChild(enterHint);
 
         if (item.kind === "tab") {
+          if (!item.discarded && (!data.activeTab || item.tabId !== data.activeTab.id)) {
+            const unloadBtn = document.createElement("button");
+            unloadBtn.type = "button";
+            unloadBtn.className = "qc-tab-btn qc-tab-btn-subtle";
+            unloadBtn.title = "Unload tab (save memory)";
+            unloadBtn.setAttribute("aria-label", "Unload tab");
+            unloadBtn.appendChild(createSvgIcon("moon"));
+            unloadBtn.addEventListener("click", async (e) => {
+              e.stopPropagation();
+              const currentId = currentItems[selectedIndex]?.id;
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "DISCARD_TAB", tabId: item.tabId }
+              });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error, true);
+              await refreshData(currentId);
+              input.focus();
+            });
+            meta.appendChild(unloadBtn);
+          }
+
+          if (item.subtitle && /^https?:\/\//i.test(item.subtitle)) {
+            const archiveBtn = document.createElement("button");
+            archiveBtn.type = "button";
+            archiveBtn.className = "qc-tab-btn qc-tab-btn-subtle";
+            archiveBtn.title = "Archive tab (save & close)";
+            archiveBtn.setAttribute("aria-label", "Archive tab");
+            archiveBtn.appendChild(createSvgIcon("archive"));
+            archiveBtn.addEventListener("click", async (e) => {
+              e.stopPropagation();
+              const currentId = currentItems[selectedIndex]?.id;
+              const res = await sendRuntimeMessage({
+                type: "EXECUTE_ACTION",
+                payload: { action: "ARCHIVE_TAB", tabId: item.tabId }
+              });
+              if (res?.toast) showToast(res.toast);
+              else if (res?.error) showToast(res.error, true);
+              await refreshData(currentId);
+              input.focus();
+            });
+            meta.appendChild(archiveBtn);
+          }
+
           const closeBtn = document.createElement("button");
           closeBtn.type = "button";
           closeBtn.className = "qc-tab-btn";
@@ -1760,6 +1939,24 @@
             input.focus();
           });
           meta.appendChild(closeBtn);
+        } else if (item.kind === "archived") {
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "qc-tab-btn";
+          removeBtn.title = "Remove from archive";
+          removeBtn.textContent = "✕";
+          removeBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            const currentId = currentItems[selectedIndex]?.id;
+            const res = await sendRuntimeMessage({
+              type: "EXECUTE_ACTION",
+              payload: { action: "DELETE_ARCHIVED_TAB", archiveId: item.archiveId }
+            });
+            if (res?.toast) showToast(res.toast);
+            await refreshData(currentId);
+            input.focus();
+          });
+          meta.appendChild(removeBtn);
         }
 
         row.append(iconBox, main, meta);
@@ -1968,6 +2165,7 @@
           trimmed === "/h" ||
           trimmed === "/g" ||
           trimmed === "/c" ||
+          trimmed === "/a" ||
           trimmed === "/t" ||
           trimmed === "/e" ||
           trimmed === "/d"

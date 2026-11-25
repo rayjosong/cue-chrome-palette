@@ -1164,3 +1164,86 @@ test("buildResults surfaces act-toggle-vertical-sidebar and reflects verticalSid
   assert.equal(centerAct.title, "Switch to Centered Palette");
   assert.equal(centerAct.enterVerb, "Center");
 });
+
+test("parseModeAndQuery and buildResults support /a archived tabs, Arc-style unload/archive commands, and GitHub repo/issue links", () => {
+  const now = Date.now();
+  assert.deepEqual(Core.parseModeAndQuery("/a design"), {
+    mode: "archived",
+    query: "design",
+    prefixLabel: "Archived",
+    isPrefix: true,
+    rawPrefix: "/a"
+  });
+  assert.equal(Core.getModeDefinition("archived").label, "Archived");
+  assert.equal(Core.formatRelativeTime(now - 30 * 1000, now), "Just now");
+  assert.equal(Core.formatRelativeTime(now - 15 * 60 * 1000, now), "15m ago");
+  assert.equal(Core.formatRelativeTime(now - 3 * 60 * 60 * 1000, now), "3h ago");
+  assert.equal(Core.formatRelativeTime(now - 2 * 24 * 60 * 60 * 1000, now), "2d ago");
+
+  const data = {
+    activeTab: { id: 1, windowId: 10, groupId: 5, title: "Active Page", url: "https://example.com/active" },
+    tabs: [
+      { id: 1, windowId: 10, groupId: 5, title: "Active Page", url: "https://example.com/active", active: true, currentWindow: true, lastAccessed: now },
+      { id: 2, windowId: 10, groupId: 5, title: "Idle Tab", url: "https://example.com/idle", active: false, currentWindow: true, lastAccessed: now - 90 * 60 * 1000 }
+    ],
+    tabGroups: [{ id: 5, title: "Sprint", color: "purple", currentWindow: true, tabCount: 2 }],
+    archivedTabs: [
+      { id: "arch-1", title: "Arc Design Notes", url: "https://notes.example.com/arc", archivedAt: now - 2 * 60 * 60 * 1000, groupTitle: "Sprint", groupColor: "purple" }
+    ]
+  };
+
+  // /a mode lists archived tabs with RESTORE_ARCHIVED_TAB descriptor
+  const archRes = Core.buildResults(data, "/a", "all");
+  assert.equal(archRes.activeMode, "archived");
+  assert.equal(archRes.items.length, 1);
+  assert.equal(archRes.items[0].archiveId, "arch-1");
+  assert.equal(archRes.items[0].badge, "Sprint · 2h ago");
+  assert.deepEqual(archRes.items[0].actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "RESTORE_ARCHIVED_TAB", archiveId: "arch-1" }
+  });
+
+  // Global search finds archived tabs
+  const searchArch = Core.buildResults(data, "Arc Design", "all");
+  assert.ok(searchArch.items.some((i) => i.id === "archived-arch-1"));
+
+  // Unload & archive commands are searchable
+  const unloadCmds = Core.buildResults(data, "> unload", "all");
+  assert.ok(unloadCmds.items.some((i) => i.id === "act-discard-current"));
+  assert.ok(unloadCmds.items.some((i) => i.id === "act-discard-idle"));
+  assert.ok(unloadCmds.items.some((i) => i.id === "act-discard-others"));
+  assert.ok(unloadCmds.items.some((i) => i.id === "act-discard-group"));
+
+  const archiveCmds = Core.buildResults(data, "> archive", "all");
+  assert.ok(archiveCmds.items.some((i) => i.id === "act-archive-current"));
+  assert.ok(archiveCmds.items.some((i) => i.id === "act-archive-idle" && i.title === "Archive Idle Tabs (1)"));
+  assert.ok(archiveCmds.items.some((i) => i.id === "act-archive-others"));
+  assert.ok(archiveCmds.items.some((i) => i.id === "act-archive-group"));
+  assert.ok(archiveCmds.items.some((i) => i.id === "act-view-archived" && i.title === "View Archived Tabs (1)…"));
+  assert.ok(archiveCmds.items.some((i) => i.id === "act-clear-archived"));
+
+  // GitHub repo & issue quick links
+  const issueRes = Core.buildResults(data, "> report issue", "all");
+  const issueAct = issueRes.items.find((i) => i.id === "act-report-issue");
+  assert.ok(issueAct);
+  assert.deepEqual(issueAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "OPEN_URL", url: Core.ISSUES_URL }
+  });
+
+  const repoRes = Core.buildResults(data, "> github share", "all");
+  const repoAct = repoRes.items.find((i) => i.id === "act-open-repo");
+  assert.ok(repoAct);
+  assert.deepEqual(repoAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "OPEN_URL", url: Core.REPO_URL }
+  });
+
+  const coffeeRes = Core.buildResults(data, "> coffee", "all");
+  const coffeeAct = coffeeRes.items.find((i) => i.id === "act-support-coffee");
+  assert.ok(coffeeAct);
+  assert.deepEqual(coffeeAct.actionDescriptor, {
+    type: "EXECUTE_ACTION",
+    payload: { action: "OPEN_URL", url: Core.SUPPORT_URL }
+  });
+});
