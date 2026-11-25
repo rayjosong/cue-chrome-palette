@@ -26,7 +26,7 @@
 
   const REPO_URL = "https://github.com/rayjosong/cue-chrome-palette";
   const ISSUES_URL = "https://github.com/rayjosong/cue-chrome-palette/issues";
-  const SUPPORT_URL = "https://buymeacoffee.com/xqpfm09t8t";
+  const SUPPORT_URL = "https://buymeacoffee.com/crimpkey";
 
   const MODE_DEFINITIONS = {
     all: { id: "all", label: "All", singularLabel: "result", icon: "search" },

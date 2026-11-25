@@ -92,7 +92,7 @@ See **[Favourite Use Cases](docs/FAVOURITE_USECASES.md)** for everyday power wor
 
 - **Share / Star:** [github.com/rayjosong/cue-chrome-palette](https://github.com/rayjosong/cue-chrome-palette)
 - **Report a bug or request a feature:** [Open an issue on GitHub](https://github.com/rayjosong/cue-chrome-palette/issues)
-- **Support Cue:** [Buy Me a Coffee](https://buymeacoffee.com/xqpfm09t8t)
+- **Support Cue:** [Buy Me a Coffee](https://buymeacoffee.com/crimpkey)
 - You can also jump straight to the GitHub repo, Issues page, or Buy Me a Coffee from inside Cue via the footer icons, **Options → About, Feedback & Share**, or `> report issue` / `> github` / `> coffee`.
 
 ## Tests
