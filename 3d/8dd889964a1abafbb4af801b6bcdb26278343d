@@ -1,0 +1,18 @@
+palette-core.js
+  h_bd07e1019ba52e 1462-1485
+tests/background.test.js
+  h_bd07e1019ba52e 942-960
+tests/palette-core.test.js
+  h_bd07e1019ba52e 1367-1395
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d8dd889964a1abafbb4af801b6bcdb26278343d",
+  "prompts": {},
+  "humans": {
+    "h_bd07e1019ba52e": {
+      "author": "rayjosong <rayjosong@users.noreply.github.com>"
+    }
+  }
+}
