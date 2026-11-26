@@ -939,3 +939,22 @@ test("SEARCH_HISTORY strips mode prefixes and searches up to 100 items", async (
   assert.equal(calls.historySearch[0].text, "nodejs");
   assert.equal(calls.historySearch[0].maxResults, 100);
 });
+
+test("EXECUTE_ACTION CREATE_TAB_GROUP creates a new group and puts the current tab inside it", async () => {
+  const { sendMessage, calls } = createChromeHarness({
+    tabs: [
+      { id: 1, windowId: 100, active: true, pinned: false, groupId: -1, title: "Repo", url: "https://github.com/org/repo" }
+    ]
+  });
+
+  const res = await sendMessage({
+    type: "EXECUTE_ACTION",
+    payload: { action: "CREATE_TAB_GROUP", tabIds: [1], title: "GitHub" }
+  });
+  assert.equal(res.ok, true);
+  assert.equal(calls.tabsGroup.length, 1);
+  assert.deepEqual(plain(calls.tabsGroup[0]), { tabIds: [1] });
+  assert.equal(calls.tabGroupsUpdate.length, 1);
+  assert.equal(calls.tabGroupsUpdate[0].props.title, "GitHub");
+  assert.equal(calls.tabGroupsUpdate[0].props.color, "blue");
+});

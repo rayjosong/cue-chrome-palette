@@ -1364,3 +1364,32 @@ test("getHighlightRanges supports cross-field partial highlights and ignores htt
   const noSchemeNoise = Core.getHighlightRanges("https://twitter.com", "ht");
   assert.deepEqual(noSchemeNoise, [{ text: "https://twitter.com", matched: false }]);
 });
+
+test("buildStaticActions exposes act-create-group to create a new group with the current tab", () => {
+  const activeTab = {
+    id: 42,
+    windowId: 1,
+    active: true,
+    pinned: false,
+    groupId: -1,
+    title: "Pull Requests",
+    url: "https://github.com/org/repo/pulls"
+  };
+  const data = {
+    activeTab,
+    tabs: [activeTab],
+    tabGroups: [],
+    quickLinks: [],
+    frecency: {}
+  };
+
+  const cmdRes = Core.buildResults(data, "> create new group", "all");
+  const createGroupAct = cmdRes.items.find((i) => i.id === "act-create-group");
+  assert.ok(createGroupAct, "act-create-group should be present in commands");
+  assert.equal(createGroupAct.actionDescriptor.type, "EXECUTE_ACTION");
+  assert.deepEqual(createGroupAct.actionDescriptor.payload, {
+    action: "CREATE_TAB_GROUP",
+    tabIds: [42],
+    title: "GitHub"
+  });
+});

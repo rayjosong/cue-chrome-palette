@@ -1459,6 +1459,30 @@
             defaultTitle: analysis.suggestedGroupTitle || "Group"
           }
         },
+        {
+          id: "act-create-group",
+          kind: "action",
+          section: "Actions",
+          title: "Create New Group with Current Tab",
+          subtitle: analysis.suggestedGroupTitle
+            ? `Create a new "${analysis.suggestedGroupTitle}" group and put this tab inside it`
+            : "Create a new tab group and put the current tab inside it",
+          badge: "Group",
+          badgeClass: "qc-badge-group",
+          iconClass: "qc-icon-group",
+          iconName: "plus",
+          enterVerb: "Create",
+          priority: 12.4,
+          searchText: "create new group put current tab inside move add",
+          actionDescriptor: {
+            type: "EXECUTE_ACTION",
+            payload: {
+              action: "CREATE_TAB_GROUP",
+              tabIds: [activeTab.id],
+              title: analysis.suggestedGroupTitle || ""
+            }
+          }
+        },
         ...(activeTab.groupId !== undefined && activeTab.groupId !== -1
           ? (() => {
               const currentGroup = (contextData?.tabGroups || []).find((g) => g.id === activeTab.groupId);
