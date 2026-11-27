@@ -8,6 +8,10 @@
 
 A fast, no-frills Manifest V3 command palette for Google Chrome (`⌘⇧K` / `Ctrl+Shift+K`) — no account, no integrations, tabs, bookmarks, and history never leave Chrome. Built for company computers as much as personal ones. Featuring Dark Indigo Glass & Adaptive Light UI, MRU tab switching, interactive tab groups, custom bangs, and optional Chrome theme switching.
 
+[![Watch Cue in action (39s)](docs/demo/cue-demo-16x9-poster.jpg)](docs/demo/cue-demo-16x9.mp4)
+
+> **Watch the 39s demo** ([16:9 Landscape](docs/demo/cue-demo-16x9.mp4) · [9:16 Instagram Story](docs/demo/cue-demo-insta-story-9x16.mp4)): introducing Cue, closing duplicate tabs in one keystroke, consolidating scattered tab groups into one window while separating ungrouped tabs, folding & unfolding tab groups, assigning any tab to a group with `⌘G`, and pinning/muting/reloading tabs via `⌘K` Quick Actions — all running locally in Chrome.
+
 ---
 
 ## Favourite Use Cases
